@@ -18,11 +18,7 @@ use crate::types::{HalfType, PointerType, StructType, VoidType};
 use super::state::ModuleExportState;
 
 impl<'a> ModuleExportState<'a> {
-    pub(super) fn export_type(
-        &self,
-        ty: Ptr<TypeObj>,
-        output: &mut String,
-    ) -> Result<(), String> {
+    pub(super) fn export_type(&self, ty: Ptr<TypeObj>, output: &mut String) -> Result<(), String> {
         let ty_ref = ty.deref(self.ctx);
         if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
             write!(output, "i{}", int_ty.width()).unwrap();

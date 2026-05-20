@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
+use pliron::r#type::Typed;
 use pliron::{
     basic_block::BasicBlock,
     builtin::{
@@ -22,7 +23,7 @@ use pliron::{
 
 use crate::{
     attributes::{FCmpPredicateAttr, FPHalfAttr, GepIndexAttr, ICmpPredicateAttr},
-    ops,
+    ops::{self, LlvmAtomicOpInterface},
     types::{FuncType, VoidType},
 };
 
@@ -39,6 +40,7 @@ use super::{
 enum LlvmOp<'op> {
     // Terminators
     Return(&'op ops::ReturnOp),
+    #[allow(dead_code)]
     Unreachable(&'op ops::UnreachableOp),
     Br(&'op ops::BrOp),
     CondBr(&'op ops::CondBrOp),
@@ -218,78 +220,144 @@ impl<'a> ModuleExportState<'a> {
 
         match LlvmOp::try_from(op_obj.as_ref()).ok() {
             // Terminators
-            Some(LlvmOp::Return(op))       => self.emit_return(op, value_names, output)?,
-            Some(LlvmOp::Unreachable(_))   => writeln!(output, "  unreachable").unwrap(),
-            Some(LlvmOp::Br(op))           => self.emit_br(op, block_labels, output)?,
-            Some(LlvmOp::CondBr(op))       => self.emit_cond_br(op, value_names, block_labels, output)?,
+            Some(LlvmOp::Return(op)) => self.emit_return(op, value_names, output)?,
+            Some(LlvmOp::Unreachable(_)) => writeln!(output, "  unreachable").unwrap(),
+            Some(LlvmOp::Br(op)) => self.emit_br(op, block_labels, output)?,
+            Some(LlvmOp::CondBr(op)) => self.emit_cond_br(op, value_names, block_labels, output)?,
             // Memory
-            Some(LlvmOp::Load(op))         => self.emit_load(op, value_names, output)?,
-            Some(LlvmOp::Store(op))        => self.emit_store(op, value_names, output)?,
-            Some(LlvmOp::Alloca(op))       => self.emit_alloca(op, value_names, output)?,
-            Some(LlvmOp::GetElementPtr(op))=> self.emit_gep(op, value_names, output)?,
+            Some(LlvmOp::Load(op)) => self.emit_load(op, value_names, output)?,
+            Some(LlvmOp::Store(op)) => self.emit_store(op, value_names, output)?,
+            Some(LlvmOp::Alloca(op)) => self.emit_alloca(op, value_names, output)?,
+            Some(LlvmOp::GetElementPtr(op)) => self.emit_gep(op, value_names, output)?,
             // Atomics
-            Some(LlvmOp::AtomicLoad(op))   => self.emit_atomic_load(op, value_names, output)?,
-            Some(LlvmOp::AtomicStore(op))  => self.emit_atomic_store(op, value_names, output)?,
-            Some(LlvmOp::AtomicRmw(op))    => self.emit_atomic_rmw(op, value_names, output)?,
-            Some(LlvmOp::AtomicCmpxchg(op))=> self.emit_atomic_cmpxchg(op, value_names, output)?,
-            Some(LlvmOp::Fence(op))        => self.emit_fence(op, output)?,
+            Some(LlvmOp::AtomicLoad(op)) => self.emit_atomic_load(op, value_names, output)?,
+            Some(LlvmOp::AtomicStore(op)) => self.emit_atomic_store(op, value_names, output)?,
+            Some(LlvmOp::AtomicRmw(op)) => self.emit_atomic_rmw(op, value_names, output)?,
+            Some(LlvmOp::AtomicCmpxchg(op)) => self.emit_atomic_cmpxchg(op, value_names, output)?,
+            Some(LlvmOp::Fence(op)) => self.emit_fence(op, output)?,
             // Integer arithmetic (all map to export_binop)
-            Some(LlvmOp::Add(op))  => self.export_binop("add",  op.get_operation(), value_names, output)?,
-            Some(LlvmOp::Sub(op))  => self.export_binop("sub",  op.get_operation(), value_names, output)?,
-            Some(LlvmOp::Mul(op))  => self.export_binop("mul",  op.get_operation(), value_names, output)?,
-            Some(LlvmOp::SDiv(op)) => self.export_binop("sdiv", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::UDiv(op)) => self.export_binop("udiv", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::SRem(op)) => self.export_binop("srem", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::URem(op)) => self.export_binop("urem", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::Shl(op))  => self.export_binop("shl",  op.get_operation(), value_names, output)?,
-            Some(LlvmOp::LShr(op)) => self.export_binop("lshr", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::AShr(op)) => self.export_binop("ashr", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::And(op))  => self.export_binop("and",  op.get_operation(), value_names, output)?,
-            Some(LlvmOp::Or(op))   => self.export_binop("or",   op.get_operation(), value_names, output)?,
-            Some(LlvmOp::Xor(op))  => self.export_binop("xor",  op.get_operation(), value_names, output)?,
+            Some(LlvmOp::Add(op)) => {
+                self.export_binop("add", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::Sub(op)) => {
+                self.export_binop("sub", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::Mul(op)) => {
+                self.export_binop("mul", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::SDiv(op)) => {
+                self.export_binop("sdiv", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::UDiv(op)) => {
+                self.export_binop("udiv", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::SRem(op)) => {
+                self.export_binop("srem", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::URem(op)) => {
+                self.export_binop("urem", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::Shl(op)) => {
+                self.export_binop("shl", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::LShr(op)) => {
+                self.export_binop("lshr", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::AShr(op)) => {
+                self.export_binop("ashr", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::And(op)) => {
+                self.export_binop("and", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::Or(op)) => {
+                self.export_binop("or", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::Xor(op)) => {
+                self.export_binop("xor", op.get_operation(), value_names, output)?
+            }
             // Float arithmetic
-            Some(LlvmOp::FAdd(op)) => self.export_binop("fadd", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::FSub(op)) => self.export_binop("fsub", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::FMul(op)) => self.export_binop("fmul", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::FDiv(op)) => self.export_binop("fdiv", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::FRem(op)) => self.export_binop("frem", op.get_operation(), value_names, output)?,
+            Some(LlvmOp::FAdd(op)) => {
+                self.export_binop("fadd", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::FSub(op)) => {
+                self.export_binop("fsub", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::FMul(op)) => {
+                self.export_binop("fmul", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::FDiv(op)) => {
+                self.export_binop("fdiv", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::FRem(op)) => {
+                self.export_binop("frem", op.get_operation(), value_names, output)?
+            }
             Some(LlvmOp::FNeg(op)) => self.emit_fneg(op, value_names, output)?,
             // Comparison / select
-            Some(LlvmOp::ICmp(op))   => self.emit_icmp(op, value_names, output)?,
-            Some(LlvmOp::FCmp(op))   => self.emit_fcmp(op, value_names, output)?,
+            Some(LlvmOp::ICmp(op)) => self.emit_icmp(op, value_names, output)?,
+            Some(LlvmOp::FCmp(op)) => self.emit_fcmp(op, value_names, output)?,
             Some(LlvmOp::Select(op)) => self.emit_select(op, value_names, output)?,
             // Calls and inline assembly
-            Some(LlvmOp::Call(op))          => self.emit_call(op, value_names, output)?,
-            Some(LlvmOp::InlineAsm(op))     => self.emit_inline_asm(op, value_names, output)?,
-            Some(LlvmOp::InlineAsmMulti(op))=> self.emit_inline_asm_multi(op, value_names, output)?,
+            Some(LlvmOp::Call(op)) => self.emit_call(op, value_names, output)?,
+            Some(LlvmOp::InlineAsm(op)) => self.emit_inline_asm(op, value_names, output)?,
+            Some(LlvmOp::InlineAsmMulti(op)) => {
+                self.emit_inline_asm_multi(op, value_names, output)?
+            }
             // Casts
-            Some(LlvmOp::Bitcast(op))      => self.export_cast("bitcast",      op.get_operation(), value_names, output)?,
-            Some(LlvmOp::AddrSpaceCast(op))=> self.export_cast("addrspacecast",op.get_operation(), value_names, output)?,
-            Some(LlvmOp::ZExt(op))         => self.emit_zext(op, value_names, output)?,
-            Some(LlvmOp::SExt(op))         => self.export_cast("sext",   op.get_operation(), value_names, output)?,
-            Some(LlvmOp::Trunc(op))        => self.export_cast("trunc",  op.get_operation(), value_names, output)?,
-            Some(LlvmOp::PtrToInt(op))     => self.export_cast("ptrtoint", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::IntToPtr(op))     => self.export_cast("inttoptr", op.get_operation(), value_names, output)?,
-            Some(LlvmOp::UIToFP(op))       => self.export_cast("uitofp",  op.get_operation(), value_names, output)?,
-            Some(LlvmOp::SIToFP(op))       => self.export_cast("sitofp",  op.get_operation(), value_names, output)?,
-            Some(LlvmOp::FPToUI(op))       => self.export_cast("fptoui",  op.get_operation(), value_names, output)?,
-            Some(LlvmOp::FPToSI(op))       => self.export_cast("fptosi",  op.get_operation(), value_names, output)?,
-            Some(LlvmOp::FPExt(op))        => self.export_cast("fpext",   op.get_operation(), value_names, output)?,
-            Some(LlvmOp::FPTrunc(op))      => self.export_cast("fptrunc", op.get_operation(), value_names, output)?,
+            Some(LlvmOp::Bitcast(op)) => {
+                self.export_cast("bitcast", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::AddrSpaceCast(op)) => {
+                self.export_cast("addrspacecast", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::ZExt(op)) => self.emit_zext(op, value_names, output)?,
+            Some(LlvmOp::SExt(op)) => {
+                self.export_cast("sext", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::Trunc(op)) => {
+                self.export_cast("trunc", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::PtrToInt(op)) => {
+                self.export_cast("ptrtoint", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::IntToPtr(op)) => {
+                self.export_cast("inttoptr", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::UIToFP(op)) => {
+                self.export_cast("uitofp", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::SIToFP(op)) => {
+                self.export_cast("sitofp", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::FPToUI(op)) => {
+                self.export_cast("fptoui", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::FPToSI(op)) => {
+                self.export_cast("fptosi", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::FPExt(op)) => {
+                self.export_cast("fpext", op.get_operation(), value_names, output)?
+            }
+            Some(LlvmOp::FPTrunc(op)) => {
+                self.export_cast("fptrunc", op.get_operation(), value_names, output)?
+            }
             // Aggregates
             Some(LlvmOp::ExtractValue(op)) => self.emit_extract_value(op, value_names, output)?,
-            Some(LlvmOp::InsertValue(op))  => self.emit_insert_value(op, value_names, output)?,
+            Some(LlvmOp::InsertValue(op)) => self.emit_insert_value(op, value_names, output)?,
             // Virtual ops
-            Some(LlvmOp::Undef(op))     => self.emit_undef(op, value_names),
-            Some(LlvmOp::Constant(op))  => self.emit_constant(op, value_names),
+            Some(LlvmOp::Undef(op)) => self.emit_undef(op, value_names),
+            Some(LlvmOp::Constant(op)) => self.emit_constant(op, value_names),
             Some(LlvmOp::AddressOf(op)) => self.emit_address_of(op, value_names),
             // Unknown
-            None => writeln!(output, "  ; Unknown op: {}", Operation::get_opid(op, self.ctx)).unwrap(),
+            None => writeln!(
+                output,
+                "  ; Unknown op: {}",
+                Operation::get_opid(op, self.ctx)
+            )
+            .unwrap(),
         }
 
         Ok(())
     }
-
 
     fn emit_return(
         &mut self,
@@ -344,7 +412,6 @@ impl<'a> ModuleExportState<'a> {
         writeln!(output, ", label %{true_label}, label %{false_label}").unwrap();
         Ok(())
     }
-
 
     fn emit_load(
         &mut self,
@@ -445,7 +512,6 @@ impl<'a> ModuleExportState<'a> {
         writeln!(output).unwrap();
         Ok(())
     }
-
 
     fn emit_atomic_load(
         &mut self,
@@ -562,17 +628,12 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
-    fn emit_fence(
-        &self,
-        op: &ops::FenceOp,
-        output: &mut String,
-    ) -> Result<(), String> {
+    fn emit_fence(&self, op: &ops::FenceOp, output: &mut String) -> Result<(), String> {
         let syncscope = ops::atomic::format_syncscope(&op.syncscope(self.ctx));
         let ordering = ops::atomic::format_ordering(&op.ordering(self.ctx));
         writeln!(output, "  fence{syncscope} {ordering}").unwrap();
         Ok(())
     }
-
 
     fn emit_fneg(
         &mut self,
@@ -593,7 +654,6 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
-
     fn emit_icmp(
         &mut self,
         op: &ops::ICmpOp,
@@ -606,8 +666,8 @@ impl<'a> ModuleExportState<'a> {
         let lhs = op_ref.get_operand(0);
         let rhs = op_ref.get_operand(1);
         let pred = match op.predicate(self.ctx) {
-            ICmpPredicateAttr::EQ  => "eq",
-            ICmpPredicateAttr::NE  => "ne",
+            ICmpPredicateAttr::EQ => "eq",
+            ICmpPredicateAttr::NE => "ne",
             ICmpPredicateAttr::SLT => "slt",
             ICmpPredicateAttr::SLE => "sle",
             ICmpPredicateAttr::SGT => "sgt",
@@ -641,21 +701,21 @@ impl<'a> ModuleExportState<'a> {
         let rhs = op_ref.get_operand(1);
         let pred = match op.predicate(self.ctx) {
             FCmpPredicateAttr::False => "false",
-            FCmpPredicateAttr::OEQ   => "oeq",
-            FCmpPredicateAttr::OGT   => "ogt",
-            FCmpPredicateAttr::OGE   => "oge",
-            FCmpPredicateAttr::OLT   => "olt",
-            FCmpPredicateAttr::OLE   => "ole",
-            FCmpPredicateAttr::ONE   => "one",
-            FCmpPredicateAttr::ORD   => "ord",
-            FCmpPredicateAttr::UEQ   => "ueq",
-            FCmpPredicateAttr::UGT   => "ugt",
-            FCmpPredicateAttr::UGE   => "uge",
-            FCmpPredicateAttr::ULT   => "ult",
-            FCmpPredicateAttr::ULE   => "ule",
-            FCmpPredicateAttr::UNE   => "une",
-            FCmpPredicateAttr::UNO   => "uno",
-            FCmpPredicateAttr::True  => "true",
+            FCmpPredicateAttr::OEQ => "oeq",
+            FCmpPredicateAttr::OGT => "ogt",
+            FCmpPredicateAttr::OGE => "oge",
+            FCmpPredicateAttr::OLT => "olt",
+            FCmpPredicateAttr::OLE => "ole",
+            FCmpPredicateAttr::ONE => "one",
+            FCmpPredicateAttr::ORD => "ord",
+            FCmpPredicateAttr::UEQ => "ueq",
+            FCmpPredicateAttr::UGT => "ugt",
+            FCmpPredicateAttr::UGE => "uge",
+            FCmpPredicateAttr::ULT => "ult",
+            FCmpPredicateAttr::ULE => "ule",
+            FCmpPredicateAttr::UNE => "une",
+            FCmpPredicateAttr::UNO => "uno",
+            FCmpPredicateAttr::True => "true",
         };
 
         write!(output, "  {res_name} = fcmp {pred} ").unwrap();
@@ -695,7 +755,6 @@ impl<'a> ModuleExportState<'a> {
         writeln!(output).unwrap();
         Ok(())
     }
-
 
     fn emit_call(
         &mut self,
@@ -781,7 +840,11 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "  call void").unwrap();
         }
 
-        write!(output, " asm sideeffect \"{asm_template}\", \"{constraints}\"(").unwrap();
+        write!(
+            output,
+            " asm sideeffect \"{asm_template}\", \"{constraints}\"("
+        )
+        .unwrap();
         for (i, arg) in op_ref.operands().enumerate() {
             if i > 0 {
                 write!(output, ", ").unwrap();
@@ -814,7 +877,11 @@ impl<'a> ModuleExportState<'a> {
 
         if num_results == 0 {
             write!(output, "  call void").unwrap();
-            write!(output, " asm sideeffect \"{asm_template}\", \"{constraints}\"(").unwrap();
+            write!(
+                output,
+                " asm sideeffect \"{asm_template}\", \"{constraints}\"("
+            )
+            .unwrap();
             for (i, arg) in op_ref.operands().enumerate() {
                 if i > 0 {
                     write!(output, ", ").unwrap();
@@ -847,7 +914,11 @@ impl<'a> ModuleExportState<'a> {
             let struct_result_name = format!("{first_res_name}_struct");
 
             write!(output, "  {struct_result_name} = call {struct_type}").unwrap();
-            write!(output, " asm sideeffect \"{asm_template}\", \"{constraints}\"(").unwrap();
+            write!(
+                output,
+                " asm sideeffect \"{asm_template}\", \"{constraints}\"("
+            )
+            .unwrap();
             for (i, arg) in op_ref.operands().enumerate() {
                 if i > 0 {
                     write!(output, ", ").unwrap();
@@ -874,7 +945,6 @@ impl<'a> ModuleExportState<'a> {
         }
         Ok(())
     }
-
 
     fn emit_zext(
         &mut self,
@@ -911,7 +981,6 @@ impl<'a> ModuleExportState<'a> {
         writeln!(output).unwrap();
         Ok(())
     }
-
 
     fn emit_extract_value(
         &mut self,
@@ -962,7 +1031,6 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
-
     fn emit_undef(&self, op: &ops::UndefOp, value_names: &mut HashMap<Value, String>) {
         let res = op.get_operation().deref(self.ctx).get_result(0);
         value_names.insert(res, "undef".to_string());
@@ -1008,7 +1076,6 @@ impl<'a> ModuleExportState<'a> {
             value_names.get(&res),
         );
     }
-
 
     pub(super) fn export_binop(
         &self,

@@ -8,7 +8,10 @@
 use std::fmt::Write;
 
 use pliron::{
-    builtin::{op_interfaces::SymbolOpInterface, ops::ModuleOp},
+    builtin::{
+        op_interfaces::{OneRegionInterface, SymbolOpInterface},
+        ops::ModuleOp,
+    },
     context::Context,
     linked_list::ContainsLinkedList,
     op::Op,

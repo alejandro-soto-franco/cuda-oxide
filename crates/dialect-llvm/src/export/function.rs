@@ -17,6 +17,7 @@ use pliron::{
     builtin::{
         attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr},
         op_interfaces::SymbolOpInterface,
+        type_interfaces::FunctionTypeInterface,
     },
     context::Ptr,
     linked_list::ContainsLinkedList,
@@ -341,8 +342,7 @@ impl<'a> ModuleExportState<'a> {
                     // exported before bb14. Without pre-pass registration, the constant's
                     // Value is not in value_names when bb6's PHI is emitted.
                     if op_id == ops::ConstantOp::get_opid_static() {
-                        let const_op =
-                            Operation::get_op::<ops::ConstantOp>(op, self.ctx).unwrap();
+                        let const_op = Operation::get_op::<ops::ConstantOp>(op, self.ctx).unwrap();
                         let val_attr = const_op.get_value(self.ctx);
 
                         let const_str = if let Some(int_attr) =
