@@ -126,9 +126,24 @@ mod tests {
     }
 
     #[test]
+    fn target_arch_uses_bundle_compute_target() {
+        let bundle = bundle_with_target("compute_90");
+        assert_eq!(target_arch_for_bundle(&bundle), "compute_90");
+    }
+
+    #[test]
     fn target_arch_falls_back_for_non_arch_target() {
-        let bundle = bundle_with_target("libdevice");
-        assert!(!target_arch_for_bundle(&bundle).is_empty());
+        // Bundles produced before the wire-format change recorded the magic
+        // string "libdevice" as the target; bundles produced after main's
+        // pipeline cleanup record "nvvm-ir" when no explicit arch is pinned.
+        // Both must round-trip through the legacy ltoir::target_arch() fallback.
+        for legacy in ["libdevice", "nvvm-ir"] {
+            let bundle = bundle_with_target(legacy);
+            assert!(
+                !target_arch_for_bundle(&bundle).is_empty(),
+                "target_arch_for_bundle returned empty for legacy target {legacy:?}"
+            );
+        }
     }
 
     fn bundle_with_target(target: &str) -> OwnedArtifactBundle {

@@ -3,6 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// Required for `type_id_u128`'s use of `core::intrinsics::type_id`. The
+// intrinsic is the only way to obtain the same 128-bit hash the backend
+// uses while keeping the bound at `T: ?Sized` (stable `TypeId::of` would
+// force `T: 'static` on every kernel marker — see `type_id.rs` for why
+// that would silently reject non-`'static` borrowing closures).
+//
+// We accept the `internal_features` warning here: cuda-oxide already ships
+// `rustc_codegen_cuda` against `rustc_private` and pins a nightly
+// toolchain, so the broader project is firmly inside rustc's internal API
+// surface. Anyone trying to lift this helper to a stable crate will hit
+// the same gate and have to make the same trade-off there.
+#![feature(core_intrinsics)]
+#![allow(internal_features)]
+
 //! Host-side utilities for CUDA kernel development.
 //!
 //! This crate provides CPU-side utilities for preparing data and setting up
@@ -11,8 +25,12 @@
 //!
 //! ## Modules
 //!
-//! - [`tiling`]: Layout transformations for tensor core operations (tcgen05)
+//! - [`embedded`]: Load `#[cuda_module]` artifact bundles embedded in the host
+//!   binary (PTX, cubin, NVVM IR, LTOIR)
 //! - [`launch`]: Kernel launch traits (`CudaKernel`, `GenericCudaKernel`)
+//! - [`ltoir`]: libNVVM + nvJitLink wrappers (`load_kernel_module`, in-memory
+//!   `build_cubin_from_nvvm_ir`, `link_ltoir_to_cubin`)
+//! - [`tiling`]: Layout transformations for tensor core operations (tcgen05)
 //!
 //! ## Macros
 //!
@@ -61,12 +79,14 @@ pub mod embedded;
 pub mod launch;
 pub mod ltoir;
 pub mod tiling;
+pub mod type_id;
 
 pub use launch::{
     CudaKernel, GenericCudaKernel, HasLength, KernelScalar, ReadOnly, Scalar, WriteOnly,
     push_kernel_device_slice, push_kernel_scalar, read_only_device_buffer_arg,
     writable_device_buffer_arg,
 };
+pub use type_id::type_id_u128;
 
 #[cfg(feature = "async")]
 pub use launch::{
