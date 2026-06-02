@@ -2662,6 +2662,24 @@ fn try_dispatch_intrinsic(
         // Memory Operations (from intrinsics::memory)
         // Note: stmatrix and cvt are under cuda_device::tcgen05::
         // =================================================================
+        // `rustc_public`'s `FnDef::name()` reports this through the crate-root
+        // re-export (`pub use vmem::ld_global_v4_f32`), which collapses the
+        // `vmem` module segment. Match both the canonical re-exported name and
+        // the fully-qualified module path so either import path dispatches.
+        "cuda_device::ld_global_v4_f32" | "cuda_device::vmem::ld_global_v4_f32" => {
+            Ok(Some(intrinsics::memory::emit_ld_global_v4_f32(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
         "cuda_device::tcgen05::stmatrix_m8n8_x4" => {
             Ok(Some(intrinsics::memory::emit_stmatrix_m8n8_x4(
                 ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,

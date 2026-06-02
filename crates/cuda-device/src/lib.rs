@@ -25,6 +25,7 @@ pub mod shared;
 pub mod tcgen05;
 pub mod thread;
 pub mod tma;
+pub mod vmem;
 pub mod warp;
 pub mod wgmma;
 
@@ -58,3 +59,4 @@ pub use tcgen05::{
 };
 pub use thread::*;
 pub use tma::TmaDescriptor;
+pub use vmem::ld_global_v4_f32;

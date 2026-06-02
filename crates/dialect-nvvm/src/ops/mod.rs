@@ -105,6 +105,7 @@ mod stmatrix;
 mod tcgen05;
 mod thread;
 mod tma;
+mod vmem;
 mod warp;
 mod wgmma;
 
@@ -121,6 +122,7 @@ pub use stmatrix::*;
 pub use tcgen05::*;
 pub use thread::*;
 pub use tma::*;
+pub use vmem::*;
 pub use warp::*;
 pub use wgmma::*;
 
@@ -141,4 +143,5 @@ pub fn register(ctx: &mut Context) {
     tcgen05::register(ctx);
     stmatrix::register(ctx);
     debug::register(ctx);
+    vmem::register(ctx);
 }

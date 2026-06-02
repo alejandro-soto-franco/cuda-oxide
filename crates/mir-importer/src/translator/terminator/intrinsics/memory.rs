@@ -855,3 +855,119 @@ pub fn emit_dynamic_shared_offset(
         "DynamicSharedArray::offset call without target block",
     )
 }
+
+// ============================================================================
+// Vectorised global loads
+// ============================================================================
+
+/// Emits `vmem::ld_global_v4_f32(ptr)`: a 128-bit `ld.global.v4.f32`.
+///
+/// Lowers the single pointer argument into an [`LdGlobalV4F32Op`] producing
+/// four f32 results, then bundles them into the `CuSimd<f32, 4>` the Rust
+/// signature returns (an `[f32; 4]` array wrapped in the struct). This mirrors
+/// the struct-return reconstruction used by the tcgen05 pure loads so the
+/// constructed value matches the destination local's alloca slot.
+///
+/// Args: (ptr: *const f32)
+#[allow(clippy::too_many_arguments)]
+pub fn emit_ld_global_v4_f32(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use super::tcgen05::destination_struct_type;
+    use dialect_nvvm::ops::LdGlobalV4F32Op;
+    use pliron::builtin::types::FP32Type;
+    use pliron::value::Value;
+
+    if args.len() != 1 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "ld_global_v4_f32 expects 1 argument (ptr), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    // arg[0]: ptr (*const f32)
+    let (ptr_val, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    // Four f32 results, one per loaded lane.
+    let f32_ty = FP32Type::get(ctx);
+    let result_types = (0..4).map(|_| f32_ty.into()).collect();
+
+    let ld_op = Operation::new(
+        ctx,
+        LdGlobalV4F32Op::get_concrete_op_info(),
+        result_types,
+        vec![ptr_val],
+        vec![],
+        0,
+    );
+    ld_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        ld_op.insert_after(ctx, prev);
+    } else {
+        ld_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let results: Vec<Value> = (0..4).map(|i| ld_op.deref(ctx).get_result(i)).collect();
+
+    // Bundle the four results into `[f32; 4]`, then wrap in the `CuSimd<f32, 4>`
+    // struct using the destination's declared layout (matches the alloca slot).
+    let array_ty = dialect_mir::types::MirArrayType::get(ctx, f32_ty.into(), 4);
+    let array_op = Operation::new(
+        ctx,
+        dialect_mir::ops::MirConstructArrayOp::get_concrete_op_info(),
+        vec![array_ty.into()],
+        results,
+        vec![],
+        0,
+    );
+    array_op.deref_mut(ctx).set_loc(loc.clone());
+    array_op.insert_after(ctx, ld_op);
+
+    let struct_ty = destination_struct_type(ctx, body, destination, loc.clone())?;
+    let array_result = array_op.deref(ctx).get_result(0);
+    let struct_op = Operation::new(
+        ctx,
+        dialect_mir::ops::MirConstructStructOp::get_concrete_op_info(),
+        vec![struct_ty],
+        vec![array_result],
+        vec![],
+        0,
+    );
+    struct_op.deref_mut(ctx).set_loc(loc.clone());
+    struct_op.insert_after(ctx, array_op);
+
+    let struct_result = struct_op.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        struct_result,
+        target,
+        block_ptr,
+        struct_op,
+        value_map,
+        block_map,
+        loc,
+        "ld_global_v4_f32 call without target block",
+    )
+}

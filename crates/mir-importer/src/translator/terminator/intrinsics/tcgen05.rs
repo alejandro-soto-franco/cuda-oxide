@@ -46,7 +46,7 @@ use rustc_public::mir;
 /// destination local. Manufacturing a layout-less `MirStructType::get(...)`
 /// struct would diverge from the ADT-translated slot type and trip the
 /// `MirStoreOp` verifier.
-fn destination_struct_type(
+pub(super) fn destination_struct_type(
     ctx: &mut Context,
     body: &mir::Body,
     destination: &mir::Place,
