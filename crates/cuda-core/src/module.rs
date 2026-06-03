@@ -17,6 +17,15 @@
 //! let module = ctx.load_module_from_ptx_src(ptx)?;
 //! let kernel = module.load_function("my_kernel")?;
 //! ```
+//!
+//! # Raw CUDA interop
+//!
+//! Most users should load kernels with [`CudaModule::load_function`] and
+//! launch them through cuda-oxide's typed launch helpers. Some CUDA-adjacent
+//! libraries need the underlying driver handle to inspect or register
+//! module-scope device state before launch. For those cases,
+//! [`CudaModule::cu_module`] exposes a non-owning raw `CUmodule` handle under
+//! an explicit `unsafe` contract.
 
 use crate::context::CudaContext;
 use crate::error::{DriverError, IntoResult};
@@ -170,6 +179,47 @@ unsafe impl Send for CudaFunction {}
 unsafe impl Sync for CudaFunction {}
 
 impl CudaModule {
+    /// Returns the parent [`CudaContext`].
+    ///
+    /// This is mainly useful when interoperating with raw CUDA driver APIs:
+    /// call [`CudaContext::bind_to_thread`] on this context before passing raw
+    /// module/function handles to APIs that require the owning context to be
+    /// current on the calling host thread.
+    pub fn context(&self) -> &Arc<CudaContext> {
+        &self.ctx
+    }
+
+    /// Returns the raw `CUmodule` handle owned by this wrapper.
+    ///
+    /// This is an escape hatch for CUDA driver interop libraries that need to
+    /// inspect or register a loaded module directly. For example, NVSHMEM uses
+    /// module-level state and may need the raw `CUmodule` before launching a
+    /// kernel that calls into NVSHMEM device code.
+    ///
+    /// The returned handle is copied by value, but it is non-owning.
+    /// cuda-oxide still owns the module and will unload it when the last
+    /// [`Arc`] owning this module is dropped.
+    ///
+    /// # Safety
+    ///
+    /// - The returned handle is valid only while this [`CudaModule`] remains
+    ///   alive. If the handle is stored outside the immediate call, the caller
+    ///   must keep an [`Arc`] to this module alive for at least as long.
+    /// - The caller must not unload the module through the raw handle, transfer
+    ///   ownership of it, or pass it to any API that may invalidate module,
+    ///   function, or global handles owned by cuda-oxide.
+    /// - Before passing the handle to CUDA driver APIs or interop libraries
+    ///   that make driver calls, the caller must ensure this module's owning
+    ///   context is current on the calling host thread, for example with
+    ///   [`CudaModule::context`] followed by
+    ///   [`CudaContext::bind_to_thread`].
+    /// - Any foreign library that retains this handle must obey the same
+    ///   lifetime and context-current requirements. cuda-oxide cannot enforce
+    ///   those requirements once the raw handle leaves Rust's type system.
+    pub unsafe fn cu_module(&self) -> cuda_bindings::CUmodule {
+        self.cu_module
+    }
+
     /// Looks up a kernel entry point by `fn_name` in this module.
     ///
     /// The returned [`CudaFunction`] holds an `Arc` back to this module,
@@ -397,10 +447,14 @@ impl CudaFunction {
     ///
     /// # Safety
     ///
-    /// The returned handle is invalidated if the parent [`CudaModule`] is
-    /// dropped. Because `CudaFunction` holds an `Arc<CudaModule>`, this
-    /// cannot happen while `self` is alive -- but the raw handle must not
-    /// be stashed beyond the lifetime of this `CudaFunction`.
+    /// The returned handle is copied by value, but it is non-owning. It is
+    /// invalidated if the parent [`CudaModule`] is dropped.
+    ///
+    /// Because [`CudaFunction`] holds an [`Arc`] to its parent module, the
+    /// module cannot be unloaded while `self` is alive. If the raw handle is
+    /// stored outside the immediate call, the caller must keep this
+    /// [`CudaFunction`] or another [`Arc`] owning the parent module alive for
+    /// at least as long as the raw handle is used.
     pub unsafe fn cu_function(&self) -> cuda_bindings::CUfunction {
         self.cu_function
     }
