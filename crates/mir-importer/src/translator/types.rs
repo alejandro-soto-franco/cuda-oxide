@@ -666,8 +666,8 @@ pub fn translate_type(
             }
 
             // For arithmetic trait outputs (Mul::Output, Add::Output, Sub::Output, etc.)
-            // When monomorphized with primitive types, these resolve to the self type.
-            // E.g., <f32 as Mul>::Output = f32, <i32 as Add>::Output = i32
+            // The standard impls resolve Output to the self type. E.g.
+            // <f32 as Mul>::Output = f32, <Complex<f32> as Mul>::Output = Complex<f32>.
             //
             // This handles: Mul, Add, Sub, Div, Rem, BitAnd, BitOr, BitXor, Shl, Shr, Neg, Not
             // The def_name format can be either:
@@ -692,13 +692,19 @@ pub fn translate_type(
                 // The self type is the first generic argument
                 let args = &alias_ty.args.0;
                 if let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = args.first() {
-                    // For primitive types implementing arithmetic traits, Output = Self
+                    // For operands whose arithmetic-trait impl sets Output = Self.
+                    // This holds for primitives (`<f32 as Mul>::Output = f32`) and
+                    // for aggregates that follow the same convention, e.g.
+                    // num_complex's `<Complex<f32> as Mul>::Output = Complex<f32>`
+                    // (issue #35) or a user struct implementing `Mul`. Translating
+                    // the self type directly recurses to lay out the aggregate.
                     if let rustc_public::ty::TyKind::RigidTy(
                         rustc_public::ty::RigidTy::Int(_)
                         | rustc_public::ty::RigidTy::Uint(_)
                         | rustc_public::ty::RigidTy::Float(_)
                         | rustc_public::ty::RigidTy::Bool
-                        | rustc_public::ty::RigidTy::Char,
+                        | rustc_public::ty::RigidTy::Char
+                        | rustc_public::ty::RigidTy::Adt(..),
                     ) = self_ty.kind()
                     {
                         return translate_type(ctx, self_ty);
