@@ -442,13 +442,23 @@ impl<'a> ModuleExportState<'a> {
         let ty = res.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
 
-        write!(output, "  {res_name} = load ").unwrap();
-        self.export_type(ty, output)?;
-        write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
+        let res_name = res_name.clone();
         let align = crate::ops::op_alignment(self.ctx, op.get_operation())
             .unwrap_or_else(|| self.natural_alignment(ty));
-        writeln!(output, ", align {align}").unwrap();
+        if self.typed_pointers {
+            let cast = self.emit_ptr_cast_to(ptr, ty, addrspace, value_names, output)?;
+            write!(output, "  {res_name} = load ").unwrap();
+            self.export_type(ty, output)?;
+            write!(output, ", ").unwrap();
+            self.write_typed_ptr(ty, addrspace, output)?;
+            writeln!(output, " {cast}, align {align}").unwrap();
+        } else {
+            write!(output, "  {res_name} = load ").unwrap();
+            self.export_type(ty, output)?;
+            write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
+            self.export_value(ptr, value_names, output)?;
+            writeln!(output, ", align {align}").unwrap();
+        }
         Ok(())
     }
 

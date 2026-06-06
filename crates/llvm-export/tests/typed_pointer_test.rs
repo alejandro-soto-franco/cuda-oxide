@@ -8,15 +8,38 @@
 use llvm_export::export::{
     export_module_to_string_with_config, ExportBackendConfig, NvvmExportConfig, PtxExportConfig,
 };
-use llvm_export::ops::{FuncOp, ReturnOp};
+use llvm_export::ops::{FuncOp, LoadOp, ReturnOp};
 use llvm_export::types::{FuncType, PointerType, VoidType};
 use pliron::{
     basic_block::BasicBlock,
-    builtin::ops::ModuleOp,
-    context::Context,
+    builtin::{
+        ops::ModuleOp,
+        types::{IntegerType, Signedness},
+    },
+    context::{Context, Ptr},
     linked_list::ContainsLinkedList,
     op::Op,
+    value::Value,
 };
+
+/// Build `define void @f(<ptr addrspace(A)> %arg)` and return the pieces a test
+/// needs to attach a memory op. The caller inserts ops into `entry`, then a
+/// `ReturnOp`, then inserts `func` into `mblock` before exporting.
+#[allow(clippy::type_complexity)]
+fn ptr_param_fn(
+    ctx: &mut Context,
+    addrspace: u32,
+) -> (ModuleOp, Ptr<BasicBlock>, FuncOp, Ptr<BasicBlock>, Value) {
+    let module = ModuleOp::new(ctx, "m".try_into().unwrap());
+    let mblock = module_block(ctx, &module);
+    let void_ty = VoidType::get(ctx);
+    let ptr_ty = PointerType::get(ctx, addrspace).into();
+    let func_ty = FuncType::get(ctx, void_ty.to_ptr(), vec![ptr_ty], false);
+    let func = FuncOp::new(ctx, "f".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(ctx);
+    let ptr_val = entry.deref(ctx).get_argument(0);
+    (module, mblock, func, entry, ptr_val)
+}
 
 /// Get the module's first block, creating one if the module is empty.
 fn module_block(ctx: &mut Context, module: &ModuleOp) -> pliron::context::Ptr<BasicBlock> {
@@ -81,5 +104,43 @@ fn typed_mode_renders_pointer_param_as_typed() {
     assert!(
         !opaque.contains("i8*"),
         "opaque mode should not emit typed i8*, got:\n{opaque}"
+    );
+}
+
+#[test]
+fn typed_mode_load_bitcasts_pointer_operand() {
+    let mut ctx = Context::new();
+    let (module, mblock, func, entry, ptr_val) = ptr_param_fn(&mut ctx, 0);
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    LoadOp::new(&mut ctx, ptr_val, i32_ty.to_ptr())
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(mblock, &ctx);
+
+    let typed = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig {
+            typed_pointers: true,
+        },
+    )
+    .unwrap();
+    assert!(
+        typed.contains("bitcast i8* ") && typed.contains(" to i32*"),
+        "typed load should bitcast the pointer to i32*, got:\n{typed}"
+    );
+    assert!(
+        typed.contains("load i32, i32* %__ptrcast."),
+        "typed load should load through the typed pointer, got:\n{typed}"
+    );
+
+    let opaque =
+        export_module_to_string_with_config(&ctx, &module, &NvvmExportConfig::default()).unwrap();
+    assert!(
+        opaque.contains("load i32, ptr"),
+        "opaque load should use ptr, got:\n{opaque}"
     );
 }
