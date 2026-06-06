@@ -52,6 +52,11 @@ pub(super) struct ModuleExportState<'a> {
     pub(super) typed_pointers: bool,
     /// Monotonic counter for synthesized pointer-bitcast temporaries.
     pub(super) ptr_cast_counter: usize,
+    /// Map from exported function name to its pointer-type string (for example
+    /// `void (i8*, i64)*`). Populated during function export and used by typed
+    /// mode to reference functions in `@llvm.used` and `nvvm.annotations`, where
+    /// a function symbol needs its real pointer type rather than a bare `i8*`.
+    pub(super) fn_ptr_types: HashMap<String, String>,
 }
 
 impl<'a> ModuleExportState<'a> {
@@ -72,6 +77,7 @@ impl<'a> ModuleExportState<'a> {
             device_functions: Vec::new(),
             typed_pointers,
             ptr_cast_counter: 0,
+            fn_ptr_types: HashMap::new(),
         }
     }
 

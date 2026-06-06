@@ -202,6 +202,24 @@ impl<'a> ModuleExportState<'a> {
             .ok_or("Not a function type")?;
 
         let ret_ty = func_ty.result_type();
+        let arg_tys: Vec<pliron::context::Ptr<pliron::r#type::TypeObj>> =
+            func_ty.arg_types().to_vec();
+
+        // Record this function's pointer type (for example `void (i8*, i64)*`)
+        // so typed mode can reference it in `@llvm.used` and `nvvm.annotations`,
+        // where a function symbol needs its real pointer type. This is the last
+        // use of `func_ty`; the bare-symbol branches below read `arg_tys`.
+        let mut fn_ptr_ty = String::new();
+        self.export_type(ret_ty, &mut fn_ptr_ty)?;
+        fn_ptr_ty.push_str(" (");
+        for (i, arg_ty) in arg_tys.iter().enumerate() {
+            if i > 0 {
+                fn_ptr_ty.push_str(", ");
+            }
+            self.export_type(*arg_ty, &mut fn_ptr_ty)?;
+        }
+        fn_ptr_ty.push_str(")*");
+        self.fn_ptr_types.insert(fixed_func_name.clone(), fn_ptr_ty);
 
         // Check if function has a body
         if func.get_operation().deref(self.ctx).regions().count() == 0 {
@@ -210,8 +228,7 @@ impl<'a> ModuleExportState<'a> {
             self.export_type(ret_ty, output)?;
             write!(output, " @{fixed_func_name}(").unwrap();
 
-            let args = func_ty.arg_types();
-            for (i, arg_ty) in args.iter().enumerate() {
+            for (i, arg_ty) in arg_tys.iter().enumerate() {
                 if i > 0 {
                     write!(output, ", ").unwrap();
                 }

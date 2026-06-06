@@ -139,21 +139,35 @@ pub(super) fn export_module_with_externs_impl(
     // device functions have no callers when compiled without a kernel (consumed by
     // external C++ via LTOIR). Both need @llvm.used to survive optimization.
     if config.emit_llvm_used() {
-        // Typed mode renders every pointer as the uniform `i8*`; opaque mode
-        // uses `ptr`. Pre-Blackwell libNVVM rejects opaque pointers anywhere,
-        // including this global, so it must follow the module's pointer mode.
+        // `@llvm.used` is an `[N x i8*]`/`[N x ptr]` global. Opaque mode writes
+        // `ptr @f`. Typed mode must cast each function to the array's `i8*`
+        // element type with a constant bitcast from the function's real pointer
+        // type, since pre-Blackwell libNVVM rejects opaque pointers and a bare
+        // `i8* @f` would mismatch the function's defined type.
+        let used_ref = |name: &str| -> String {
+            if state.typed_pointers {
+                let ty = state
+                    .fn_ptr_types
+                    .get(name)
+                    .map(String::as_str)
+                    .unwrap_or("i8*");
+                format!("i8* bitcast ({ty} @{name} to i8*)")
+            } else {
+                format!("ptr @{name}")
+            }
+        };
         let ptr_kw = if state.typed_pointers { "i8*" } else { "ptr" };
         let mut used_refs: Vec<String> = Vec::new();
 
         // Include all kernels
         for k in &state.all_kernels {
-            used_refs.push(format!("{ptr_kw} @{}", k.name));
+            used_refs.push(used_ref(&k.name));
         }
 
         // Include standalone device functions (when no kernels present)
         if state.all_kernels.is_empty() {
             for name in &state.device_functions {
-                used_refs.push(format!("{ptr_kw} @{}", name));
+                used_refs.push(used_ref(name));
             }
         }
 

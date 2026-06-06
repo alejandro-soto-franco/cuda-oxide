@@ -19,9 +19,22 @@ pub(super) fn emit_nvvm_annotations(
 ) {
     let mut metadata_refs = Vec::new();
     let mut md_id = 0;
-    // Typed mode references kernel functions as the uniform `i8*`; opaque mode
-    // uses `ptr`. Pre-Blackwell libNVVM rejects opaque pointers in annotations.
-    let ptr_kw = if state.typed_pointers { "i8*" } else { "ptr" };
+    // Reference a kernel function in an annotation. Typed mode uses the
+    // function's real pointer type (for example `void (i8*, i64)* @k`), since
+    // pre-Blackwell libNVVM rejects opaque pointers and a bare `i8*` would
+    // mismatch the function's defined type. Opaque mode uses `ptr @k`.
+    let fn_ref = |name: &str| -> String {
+        if state.typed_pointers {
+            let ty = state
+                .fn_ptr_types
+                .get(name)
+                .map(String::as_str)
+                .unwrap_or("i8*");
+            format!("{ty} @{name}")
+        } else {
+            format!("ptr @{name}")
+        }
+    };
 
     // Collect names of kernels that have special configs
     let special_kernel_names: std::collections::HashSet<&str> = state
@@ -37,8 +50,9 @@ pub(super) fn emit_nvvm_annotations(
             if !special_kernel_names.contains(kernel.name.as_str()) {
                 writeln!(
                     output,
-                    "!{} = !{{{ptr_kw} @{}, !\"kernel\", i32 1}}",
-                    md_id, kernel.name
+                    "!{} = !{{{}, !\"kernel\", i32 1}}",
+                    md_id,
+                    fn_ref(&kernel.name)
                 )
                 .unwrap();
                 metadata_refs.push(format!("!{}", md_id));
@@ -51,8 +65,8 @@ pub(super) fn emit_nvvm_annotations(
     for cfg in state.cluster_kernels.iter() {
         writeln!(
             output,
-            "!{} = !{{{ptr_kw} @{}, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {}, !\"cluster_dim_y\", i32 {}, !\"cluster_dim_z\", i32 {}}}",
-            md_id, cfg.name, cfg.dim_x, cfg.dim_y, cfg.dim_z
+            "!{} = !{{{}, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {}, !\"cluster_dim_y\", i32 {}, !\"cluster_dim_z\", i32 {}}}",
+            md_id, fn_ref(&cfg.name), cfg.dim_x, cfg.dim_y, cfg.dim_z
         )
         .unwrap();
         metadata_refs.push(format!("!{}", md_id));
@@ -64,15 +78,15 @@ pub(super) fn emit_nvvm_annotations(
         if let Some(min_blocks) = bounds.min_blocks {
             writeln!(
                 output,
-                "!{} = !{{{ptr_kw} @{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}, !\"minctasm\", i32 {}}}",
-                md_id, bounds.name, bounds.max_threads, min_blocks
+                "!{} = !{{{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}, !\"minctasm\", i32 {}}}",
+                md_id, fn_ref(&bounds.name), bounds.max_threads, min_blocks
             )
             .unwrap();
         } else {
             writeln!(
                 output,
-                "!{} = !{{{ptr_kw} @{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}}}",
-                md_id, bounds.name, bounds.max_threads
+                "!{} = !{{{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}}}",
+                md_id, fn_ref(&bounds.name), bounds.max_threads
             )
             .unwrap();
         }
