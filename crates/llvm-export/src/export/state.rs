@@ -57,6 +57,11 @@ pub(super) struct ModuleExportState<'a> {
     /// mode to reference functions in `@llvm.used` and `nvvm.annotations`, where
     /// a function symbol needs its real pointer type rather than a bare `i8*`.
     pub(super) fn_ptr_types: HashMap<String, String>,
+    /// Map from global symbol name to its (value-type string, address space),
+    /// for example `("[256 x float]", 3)`. Populated before function export and
+    /// used by typed mode to reference a global through a constant bitcast to the
+    /// uniform `i8*`, since `@g` carries the global's real pointer type.
+    pub(super) global_value_types: HashMap<String, (String, u32)>,
 }
 
 impl<'a> ModuleExportState<'a> {
@@ -78,6 +83,7 @@ impl<'a> ModuleExportState<'a> {
             typed_pointers,
             ptr_cast_counter: 0,
             fn_ptr_types: HashMap::new(),
+            global_value_types: HashMap::new(),
         }
     }
 

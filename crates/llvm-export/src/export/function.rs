@@ -102,6 +102,36 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
+    /// Record every global's value type and address space so typed mode can
+    /// reference a global through a constant bitcast to the uniform `i8*` (see
+    /// the AddressOf naming in the value pre-pass). Must run before any function
+    /// is exported, since globals and functions share one top-level pass and a
+    /// function may textually precede a global it references.
+    pub(super) fn record_global_types(
+        &mut self,
+        block: pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    ) -> Result<(), String> {
+        let globals: Vec<(String, pliron::context::Ptr<pliron::r#type::TypeObj>, u32)> = block
+            .deref(self.ctx)
+            .iter(self.ctx)
+            .filter_map(|op| {
+                pliron::operation::Operation::get_op::<ops::GlobalOp>(op, self.ctx).map(|g| {
+                    (
+                        g.get_symbol_name(self.ctx).to_string(),
+                        g.get_type(self.ctx),
+                        g.address_space(self.ctx),
+                    )
+                })
+            })
+            .collect();
+        for (name, ty, asp) in globals {
+            let mut s = String::new();
+            self.export_type(ty, &mut s)?;
+            self.global_value_types.insert(name, (s, asp));
+        }
+        Ok(())
+    }
+
     pub(super) fn export_function(
         &mut self,
         func: &FuncOp,
@@ -393,7 +423,25 @@ impl<'a> ModuleExportState<'a> {
                     if let Some(address_of) = op_dyn.downcast_ref::<ops::AddressOfOp>() {
                         let global_name = address_of.get_global_name(self.ctx);
                         let res = op_ref.get_result(0);
-                        value_names.insert(res, format!("@{global_name}"));
+                        // Opaque mode prints the symbol directly. Typed mode must
+                        // reach the symbol through a constant bitcast to the
+                        // uniform `i8*`, since `@g` carries the global's real
+                        // pointer type and would mismatch a bare `i8*` use.
+                        let reg = match (
+                            self.typed_pointers,
+                            self.global_value_types.get(&global_name.to_string()),
+                        ) {
+                            (true, Some((vty, asp))) => {
+                                let asp_str = if *asp != 0 {
+                                    format!(" addrspace({asp})")
+                                } else {
+                                    String::new()
+                                };
+                                format!("bitcast ({vty}{asp_str}* @{global_name} to i8{asp_str}*)")
+                            }
+                            _ => format!("@{global_name}"),
+                        };
+                        value_names.insert(res, reg);
                         continue;
                     }
 

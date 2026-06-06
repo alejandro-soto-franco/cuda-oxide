@@ -27,6 +27,27 @@ use super::{
     state::ModuleExportState,
 };
 
+/// Convert a pre-rendered type string to the module's pointer mode. Device
+/// extern declarations carry their parameter and return types as strings built
+/// elsewhere (opaque `ptr` spelling). In typed mode rewrite the opaque pointer
+/// spellings to the uniform `i8*` so pre-Blackwell libNVVM accepts the declare.
+fn typed_ptr_type_str(s: &str, typed: bool) -> String {
+    if !typed {
+        return s.to_string();
+    }
+    let t = s.trim();
+    if t == "ptr" {
+        "i8*".to_string()
+    } else if let Some(rest) = t.strip_prefix("ptr addrspace(") {
+        match rest.strip_suffix(')') {
+            Some(n) => format!("i8 addrspace({n})*"),
+            None => s.to_string(),
+        }
+    } else {
+        s.to_string()
+    }
+}
+
 /// Internal implementation of module export with device externs.
 pub(super) fn export_module_with_externs_impl(
     ctx: &Context,
@@ -81,11 +102,17 @@ pub(super) fn export_module_with_externs_impl(
         )
         .unwrap();
         for decl in device_externs {
-            let params = decl.param_types.join(", ");
+            let params = decl
+                .param_types
+                .iter()
+                .map(|p| typed_ptr_type_str(p, state.typed_pointers))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ret = typed_ptr_type_str(&decl.return_type, state.typed_pointers);
             writeln!(
                 &mut output,
                 "declare {} @{}({})",
-                decl.return_type, decl.export_name, params
+                ret, decl.export_name, params
             )
             .unwrap();
         }
@@ -101,6 +128,7 @@ pub(super) fn export_module_with_externs_impl(
 
     let region = module.get_region(ctx).deref(ctx);
     if let Some(block) = region.iter(ctx).next() {
+        state.record_global_types(block)?;
         let mut last_was_decl = false;
         for op in block.deref(ctx).iter(ctx) {
             if let Some(func) = Operation::get_op::<ops::FuncOp>(op, ctx) {
@@ -264,6 +292,7 @@ pub(super) fn export_module_to_string_with_config(
     // 2. Process Globals and Functions (including intrinsic declarations)
     let region = module.get_region(ctx).deref(ctx);
     if let Some(block) = region.iter(ctx).next() {
+        state.record_global_types(block)?;
         let mut last_was_decl = false;
         for op in block.deref(ctx).iter(ctx) {
             if let Some(func) = Operation::get_op::<ops::FuncOp>(op, ctx) {
@@ -302,16 +331,32 @@ pub(super) fn export_module_to_string_with_config(
     // Without explicit marking, LLVM's optimizer sees them as "dead code" and removes them.
     // The @llvm.used global tells LLVM: "preserve these symbols, they're used externally."
     if config.emit_llvm_used() {
+        // Typed mode wraps each function in a constant bitcast to the array's
+        // `i8*` element type (a bare `i8* @f` mismatches the function's defined
+        // type); opaque mode writes `ptr @f`. See the matching block above.
+        let used_ref = |name: &str| -> String {
+            if state.typed_pointers {
+                let ty = state
+                    .fn_ptr_types
+                    .get(name)
+                    .map(String::as_str)
+                    .unwrap_or("i8*");
+                format!("i8* bitcast ({ty} @{name} to i8*)")
+            } else {
+                format!("ptr @{name}")
+            }
+        };
+        let ptr_kw = if state.typed_pointers { "i8*" } else { "ptr" };
         let mut used_refs: Vec<String> = Vec::new();
 
         for k in &state.all_kernels {
-            used_refs.push(format!("ptr @{}", k.name));
+            used_refs.push(used_ref(&k.name));
         }
 
         // Include standalone device functions when no kernels are present
         if state.all_kernels.is_empty() {
             for name in &state.device_functions {
-                used_refs.push(format!("ptr @{}", name));
+                used_refs.push(used_ref(name));
             }
         }
 
@@ -319,7 +364,7 @@ pub(super) fn export_module_to_string_with_config(
             writeln!(&mut output).unwrap();
             writeln!(
                 &mut output,
-                "@llvm.used = appending global [{} x ptr] [{}], section \"llvm.metadata\"",
+                "@llvm.used = appending global [{} x {ptr_kw}] [{}], section \"llvm.metadata\"",
                 used_refs.len(),
                 used_refs.join(", ")
             )
