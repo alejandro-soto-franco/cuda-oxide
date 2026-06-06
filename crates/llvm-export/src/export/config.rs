@@ -40,6 +40,13 @@ pub trait ExportBackendConfig {
 
     /// Whether kernel definitions should use the `ptx_kernel` calling convention.
     fn emit_ptx_kernel_keyword(&self) -> bool;
+
+    /// Whether to render pointers as typed (`i8 addrspace(N)*`); opaque (`ptr`)
+    /// when false. Needed on the libNVVM path for pre-Blackwell targets, whose
+    /// libNVVM rejects opaque pointers. See issue #98.
+    fn typed_pointers(&self) -> bool {
+        false
+    }
 }
 
 /// Default PTX export configuration.
@@ -88,11 +95,18 @@ impl ExportBackendConfig for PtxExportConfig {
 /// Currently supports NVVM 20 dialect (Blackwell+, opaque pointers).
 /// NVVM 7 dialect (pre-Blackwell, typed pointers) is not yet supported.
 #[derive(Clone, Debug, Default)]
-pub struct NvvmExportConfig;
+pub struct NvvmExportConfig {
+    /// Render typed pointers for pre-Blackwell libNVVM. Default false (opaque).
+    pub typed_pointers: bool,
+}
 
 impl ExportBackendConfig for NvvmExportConfig {
     fn datalayout(&self) -> &str {
         NVPTX_DATALAYOUT_FULL
+    }
+
+    fn typed_pointers(&self) -> bool {
+        self.typed_pointers
     }
 
     fn emit_llvm_used(&self) -> bool {

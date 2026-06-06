@@ -632,7 +632,7 @@ fn export_llvm_ir(
         .ok_or_else(|| PipelineError::Export("Not a module op".to_string()))?;
 
     let llvm_ir = if emit_nvvm_ir {
-        let config = llvm_export::export::NvvmExportConfig;
+        let config = llvm_export::export::NvvmExportConfig::default();
         llvm_export::export::export_module_with_externs(ctx, &module_op, device_externs, &config)
             .map_err(PipelineError::Export)?
     } else {
