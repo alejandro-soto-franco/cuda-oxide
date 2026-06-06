@@ -48,6 +48,10 @@ pub(super) struct ModuleExportState<'a> {
     pub(super) emit_ptx_kernel_keyword: bool,
     /// Track device function names for @llvm.used (standalone device fn compilation)
     pub(super) device_functions: Vec<String>,
+    /// Render typed pointers (`i8 addrspace(N)*`) for pre-Blackwell libNVVM.
+    pub(super) typed_pointers: bool,
+    /// Monotonic counter for synthesized pointer-bitcast temporaries.
+    pub(super) ptr_cast_counter: usize,
 }
 
 impl<'a> ModuleExportState<'a> {
@@ -55,6 +59,7 @@ impl<'a> ModuleExportState<'a> {
         ctx: &'a pliron::context::Context,
         track_all_kernels: bool,
         emit_ptx_kernel_keyword: bool,
+        typed_pointers: bool,
     ) -> Self {
         Self {
             ctx,
@@ -65,7 +70,17 @@ impl<'a> ModuleExportState<'a> {
             track_all_kernels,
             emit_ptx_kernel_keyword,
             device_functions: Vec::new(),
+            typed_pointers,
+            ptr_cast_counter: 0,
         }
+    }
+
+    /// Allocate a fresh SSA name for a synthesized pointer bitcast. The prefix
+    /// keeps it distinct from the `%vN` names assigned by the value pre-pass.
+    pub(super) fn fresh_ptr_cast_name(&mut self) -> String {
+        let n = self.ptr_cast_counter;
+        self.ptr_cast_counter += 1;
+        format!("%__ptrcast.{n}")
     }
 
     /// Check if a function name is a known convergent intrinsic.

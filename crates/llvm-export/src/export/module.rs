@@ -37,7 +37,12 @@ pub(super) fn export_module_with_externs_impl(
     let mut output = String::new();
     let emit_all_annotations = config.emit_all_kernel_annotations();
     let emit_ptx_kernel_keyword = config.emit_ptx_kernel_keyword();
-    let mut state = ModuleExportState::new(ctx, emit_all_annotations, emit_ptx_kernel_keyword);
+    let mut state = ModuleExportState::new(
+        ctx,
+        emit_all_annotations,
+        emit_ptx_kernel_keyword,
+        config.typed_pointers(),
+    );
 
     // 1. Header
     writeln!(
@@ -207,7 +212,12 @@ pub(super) fn export_module_to_string_with_config(
     let mut output = String::new();
     let emit_all_annotations = config.emit_all_kernel_annotations();
     let emit_ptx_kernel_keyword = config.emit_ptx_kernel_keyword();
-    let mut state = ModuleExportState::new(ctx, emit_all_annotations, emit_ptx_kernel_keyword);
+    let mut state = ModuleExportState::new(
+        ctx,
+        emit_all_annotations,
+        emit_ptx_kernel_keyword,
+        config.typed_pointers(),
+    );
 
     // 1. Header
     writeln!(
