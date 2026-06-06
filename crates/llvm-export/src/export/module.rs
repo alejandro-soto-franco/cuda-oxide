@@ -139,17 +139,21 @@ pub(super) fn export_module_with_externs_impl(
     // device functions have no callers when compiled without a kernel (consumed by
     // external C++ via LTOIR). Both need @llvm.used to survive optimization.
     if config.emit_llvm_used() {
+        // Typed mode renders every pointer as the uniform `i8*`; opaque mode
+        // uses `ptr`. Pre-Blackwell libNVVM rejects opaque pointers anywhere,
+        // including this global, so it must follow the module's pointer mode.
+        let ptr_kw = if state.typed_pointers { "i8*" } else { "ptr" };
         let mut used_refs: Vec<String> = Vec::new();
 
         // Include all kernels
         for k in &state.all_kernels {
-            used_refs.push(format!("ptr @{}", k.name));
+            used_refs.push(format!("{ptr_kw} @{}", k.name));
         }
 
         // Include standalone device functions (when no kernels present)
         if state.all_kernels.is_empty() {
             for name in &state.device_functions {
-                used_refs.push(format!("ptr @{}", name));
+                used_refs.push(format!("{ptr_kw} @{}", name));
             }
         }
 
@@ -157,7 +161,7 @@ pub(super) fn export_module_with_externs_impl(
             writeln!(&mut output).unwrap();
             writeln!(
                 &mut output,
-                "@llvm.used = appending global [{} x ptr] [{}], section \"llvm.metadata\"",
+                "@llvm.used = appending global [{} x {ptr_kw}] [{}], section \"llvm.metadata\"",
                 used_refs.len(),
                 used_refs.join(", ")
             )

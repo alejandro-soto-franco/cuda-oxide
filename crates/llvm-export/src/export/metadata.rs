@@ -19,6 +19,9 @@ pub(super) fn emit_nvvm_annotations(
 ) {
     let mut metadata_refs = Vec::new();
     let mut md_id = 0;
+    // Typed mode references kernel functions as the uniform `i8*`; opaque mode
+    // uses `ptr`. Pre-Blackwell libNVVM rejects opaque pointers in annotations.
+    let ptr_kw = if state.typed_pointers { "i8*" } else { "ptr" };
 
     // Collect names of kernels that have special configs
     let special_kernel_names: std::collections::HashSet<&str> = state
@@ -34,7 +37,7 @@ pub(super) fn emit_nvvm_annotations(
             if !special_kernel_names.contains(kernel.name.as_str()) {
                 writeln!(
                     output,
-                    "!{} = !{{ptr @{}, !\"kernel\", i32 1}}",
+                    "!{} = !{{{ptr_kw} @{}, !\"kernel\", i32 1}}",
                     md_id, kernel.name
                 )
                 .unwrap();
@@ -48,7 +51,7 @@ pub(super) fn emit_nvvm_annotations(
     for cfg in state.cluster_kernels.iter() {
         writeln!(
             output,
-            "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {}, !\"cluster_dim_y\", i32 {}, !\"cluster_dim_z\", i32 {}}}",
+            "!{} = !{{{ptr_kw} @{}, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {}, !\"cluster_dim_y\", i32 {}, !\"cluster_dim_z\", i32 {}}}",
             md_id, cfg.name, cfg.dim_x, cfg.dim_y, cfg.dim_z
         )
         .unwrap();
@@ -61,14 +64,14 @@ pub(super) fn emit_nvvm_annotations(
         if let Some(min_blocks) = bounds.min_blocks {
             writeln!(
                 output,
-                "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}, !\"minctasm\", i32 {}}}",
+                "!{} = !{{{ptr_kw} @{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}, !\"minctasm\", i32 {}}}",
                 md_id, bounds.name, bounds.max_threads, min_blocks
             )
             .unwrap();
         } else {
             writeln!(
                 output,
-                "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}}}",
+                "!{} = !{{{ptr_kw} @{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}}}",
                 md_id, bounds.name, bounds.max_threads
             )
             .unwrap();
