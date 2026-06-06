@@ -8,7 +8,9 @@
 use llvm_export::export::{
     export_module_to_string_with_config, ExportBackendConfig, NvvmExportConfig, PtxExportConfig,
 };
-use llvm_export::ops::{AllocaOp, ConstantOp, FuncOp, LoadOp, ReturnOp, StoreOp};
+use llvm_export::ops::{
+    AllocaOp, ConstantOp, FuncOp, GepIndex, GetElementPtrOp, LoadOp, ReturnOp, StoreOp,
+};
 use llvm_export::types::{FuncType, PointerType, VoidType};
 use pliron::{
     basic_block::BasicBlock,
@@ -237,5 +239,42 @@ fn typed_mode_alloca_yields_i8_pointer() {
     assert!(
         !alloca_line.contains("bitcast"),
         "opaque alloca should not bitcast, got:\n{alloca_line}"
+    );
+}
+
+#[test]
+fn typed_mode_gep_casts_base_and_result() {
+    let mut ctx = Context::new();
+    let (module, mblock, func, entry, ptr_val) = ptr_param_fn(&mut ctx, 0);
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let gep = GetElementPtrOp::new(&mut ctx, ptr_val, vec![GepIndex::Constant(0)], i32_ty.to_ptr());
+    gep.get_operation().insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(mblock, &ctx);
+
+    let typed = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig {
+            typed_pointers: true,
+        },
+    )
+    .unwrap();
+    assert!(
+        typed.contains("getelementptr inbounds i32, i32* %__ptrcast."),
+        "typed GEP should index through a typed base pointer, got:\n{typed}"
+    );
+    assert!(
+        typed.contains("bitcast i32* %__ptrcast.") && typed.contains(" to i8*"),
+        "typed GEP should cast its result back to i8*, got:\n{typed}"
+    );
+
+    let opaque =
+        export_module_to_string_with_config(&ctx, &module, &NvvmExportConfig::default()).unwrap();
+    assert!(
+        opaque.contains("getelementptr inbounds i32, ptr"),
+        "opaque GEP should index through ptr, got:\n{opaque}"
     );
 }

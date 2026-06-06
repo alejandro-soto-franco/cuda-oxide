@@ -538,34 +538,52 @@ impl<'a> ModuleExportState<'a> {
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
         let res = op_ref.get_result(0);
-        let res_name = value_names.get(&res).unwrap();
+        let res_name = value_names.get(&res).unwrap().clone();
         let ptr = op_ref.get_operand(0);
         let elem_ty = op
             .get_attr_gep_src_elem_type(self.ctx)
             .expect("Missing gep_src_elem_type")
             .get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
+        let indices = op.get_attr_gep_indices(self.ctx).unwrap().0.clone();
 
-        write!(output, "  {res_name} = getelementptr inbounds ").unwrap();
-        self.export_type(elem_ty, output)?;
-        write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
-
-        for idx_attr in &op.get_attr_gep_indices(self.ctx).unwrap().0 {
-            write!(output, ", ").unwrap();
+        // Build the comma-separated index list once; both modes share it. This
+        // is computed while `op_ref` is alive (before any `&mut self` cast call)
+        // since `OperandIdx` indices need to read operands off the operation.
+        let mut idx_str = String::new();
+        for idx_attr in &indices {
+            write!(idx_str, ", ").unwrap();
             match idx_attr {
                 GepIndexAttr::Constant(val) => {
-                    write!(output, "i32 {val}").unwrap();
+                    write!(idx_str, "i32 {val}").unwrap();
                 }
                 GepIndexAttr::OperandIdx(operand_idx) => {
                     let val = op_ref.get_operand(*operand_idx);
-                    self.export_type(val.get_type(self.ctx), output)?;
-                    write!(output, " ").unwrap();
-                    self.export_value(val, value_names, output)?;
+                    self.export_type(val.get_type(self.ctx), &mut idx_str)?;
+                    write!(idx_str, " ").unwrap();
+                    self.export_value(val, value_names, &mut idx_str)?;
                 }
             }
         }
-        writeln!(output).unwrap();
+        drop(op_ref);
+
+        if self.typed_pointers {
+            let base_cast = self.emit_ptr_cast_to(ptr, elem_ty, addrspace, value_names, output)?;
+            let result_elem = self.gep_result_elem_type(elem_ty, &indices)?;
+            let typed_result = self.fresh_ptr_cast_name();
+            write!(output, "  {typed_result} = getelementptr inbounds ").unwrap();
+            self.export_type(elem_ty, output)?;
+            write!(output, ", ").unwrap();
+            self.write_typed_ptr(elem_ty, addrspace, output)?;
+            writeln!(output, " {base_cast}{idx_str}").unwrap();
+            self.emit_ptr_cast_to_i8(&typed_result, result_elem, addrspace, &res_name, output)?;
+        } else {
+            write!(output, "  {res_name} = getelementptr inbounds ").unwrap();
+            self.export_type(elem_ty, output)?;
+            write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
+            self.export_value(ptr, value_names, output)?;
+            writeln!(output, "{idx_str}").unwrap();
+        }
         Ok(())
     }
 
