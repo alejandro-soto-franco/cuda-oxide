@@ -621,6 +621,31 @@ fn llvm_type_string_to_pliron(ctx: &mut Context, type_str: &str) -> Ptr<pliron::
 /// - Otherwise: Uses default `PtxExportConfig` for standard PTX generation
 ///
 /// Device extern declarations are emitted before the main module content.
+/// Parse a leading compute capability from `sm_90` / `compute_90` / `90` /
+/// `sm_90a`, ignoring a trailing architecture variant letter.
+fn parse_compute_capability(arch: &str) -> Option<u32> {
+    let s = arch
+        .strip_prefix("sm_")
+        .or_else(|| arch.strip_prefix("compute_"))
+        .unwrap_or(arch);
+    let digits: String = s.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// Decide whether the NVVM exporter should emit typed pointers for `arch`.
+///
+/// Pre-Blackwell (compute capability < 100) needs typed pointers, since its
+/// libNVVM rejects the opaque-pointer dialect (#98). Blackwell+ uses opaque.
+/// `CUDA_OXIDE_PTR_MODE` overrides: `typed`, `opaque`, or `auto` (default).
+fn want_typed_pointers(arch: Option<&str>, ptr_mode: Option<&str>) -> bool {
+    match ptr_mode {
+        Some("typed") => return true,
+        Some("opaque") => return false,
+        _ => {}
+    }
+    matches!(arch.and_then(parse_compute_capability), Some(cc) if cc < 100)
+}
+
 fn export_llvm_ir(
     ctx: &Context,
     module_op_ptr: Ptr<Operation>,
@@ -632,7 +657,11 @@ fn export_llvm_ir(
         .ok_or_else(|| PipelineError::Export("Not a module op".to_string()))?;
 
     let llvm_ir = if emit_nvvm_ir {
-        let config = llvm_export::export::NvvmExportConfig::default();
+        let arch = std::env::var("CUDA_OXIDE_TARGET").ok();
+        let ptr_mode = std::env::var("CUDA_OXIDE_PTR_MODE").ok();
+        let config = llvm_export::export::NvvmExportConfig {
+            typed_pointers: want_typed_pointers(arch.as_deref(), ptr_mode.as_deref()),
+        };
         llvm_export::export::export_module_with_externs(ctx, &module_op, device_externs, &config)
             .map_err(PipelineError::Export)?
     } else {
@@ -1105,6 +1134,24 @@ mod tests {
     use super::*;
     use llvm_export::export::AsDeviceExtern;
     use std::{fs, path::PathBuf};
+
+    #[test]
+    fn typed_pointer_selection_by_arch_and_override() {
+        // Pre-Blackwell auto-selects typed; Blackwell+ stays opaque.
+        assert!(want_typed_pointers(Some("sm_86"), None));
+        assert!(want_typed_pointers(Some("sm_90a"), None));
+        assert!(!want_typed_pointers(Some("sm_100"), None));
+        assert!(!want_typed_pointers(Some("sm_120"), None));
+        assert!(!want_typed_pointers(None, None));
+        // Explicit override wins regardless of arch.
+        assert!(want_typed_pointers(Some("sm_120"), Some("typed")));
+        assert!(!want_typed_pointers(Some("sm_86"), Some("opaque")));
+        // Capability parsing handles all accepted spellings.
+        assert_eq!(parse_compute_capability("sm_90"), Some(90));
+        assert_eq!(parse_compute_capability("compute_100"), Some(100));
+        assert_eq!(parse_compute_capability("120"), Some(120));
+        assert_eq!(parse_compute_capability("sm_100a"), Some(100));
+    }
 
     fn write_temp_ll(name: &str, contents: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
