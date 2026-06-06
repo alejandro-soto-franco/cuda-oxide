@@ -141,6 +141,7 @@ pub mod ops {
         context::{Context, Ptr},
         identifier::Identifier,
         op::Op,
+        operation::Operation,
         r#type::TypeObj,
         value::Value,
     };
@@ -174,9 +175,29 @@ pub mod ops {
         }
     }
 
-    /// Generic op-attribute key under which a `GlobalOp`'s explicit alignment is
-    /// stashed (pliron-llvm's `GlobalOp` has no native alignment attribute).
+    /// Op-attribute key for a `GlobalOp`'s explicit alignment.
     const GLOBAL_ALIGNMENT_KEY: &str = "cuda_oxide_global_alignment";
+
+    /// Op-attribute key under which a memory op's (`load` / `store` / `alloca`)
+    /// explicit ABI alignment is stashed. Stamped by the mir-lower alignment
+    /// pre-pass (while types are still MIR, so `repr(align(N))` is visible)
+    /// and emitted as `align N` during export.
+    const OP_ALIGNMENT_KEY: &str = "cuda_oxide_op_alignment";
+
+    /// Stamp the ABI alignment (bytes) onto a memory op.
+    pub fn set_op_alignment(ctx: &mut Context, op: Ptr<Operation>, align: u32) {
+        let key = Identifier::try_new(OP_ALIGNMENT_KEY.to_string()).expect("valid identifier");
+        op.deref_mut(ctx).attributes.set(key, AlignmentAttr(align));
+    }
+
+    /// Read the ABI alignment (bytes) stamped on a memory op, if any.
+    pub fn op_alignment(ctx: &Context, op: Ptr<Operation>) -> Option<u32> {
+        let key = Identifier::try_new(OP_ALIGNMENT_KEY.to_string()).expect("valid identifier");
+        op.deref(ctx)
+            .attributes
+            .get::<AlignmentAttr>(&key)
+            .map(|a| a.0)
+    }
 
     /// Alignment helpers re-homed from the pre-migration local `GlobalOp`.
     /// Upstream `GlobalOp` carries type/linkage/addrspace but no alignment, so

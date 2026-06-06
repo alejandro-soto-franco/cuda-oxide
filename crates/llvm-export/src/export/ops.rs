@@ -446,7 +446,9 @@ impl<'a> ModuleExportState<'a> {
         self.export_type(ty, output)?;
         write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
         self.export_value(ptr, value_names, output)?;
-        writeln!(output).unwrap();
+        let align = crate::ops::op_alignment(self.ctx, op.get_operation())
+            .unwrap_or_else(|| self.natural_alignment(ty));
+        writeln!(output, ", align {align}").unwrap();
         Ok(())
     }
 
@@ -459,15 +461,18 @@ impl<'a> ModuleExportState<'a> {
         let op_ref = op.get_operation().deref(self.ctx);
         let val = op_ref.get_operand(0);
         let ptr = op_ref.get_operand(1);
+        let val_ty = val.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
 
         write!(output, "  store ").unwrap();
-        self.export_type(val.get_type(self.ctx), output)?;
+        self.export_type(val_ty, output)?;
         write!(output, " ").unwrap();
         self.export_value(val, value_names, output)?;
         write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
         self.export_value(ptr, value_names, output)?;
-        writeln!(output).unwrap();
+        let align = crate::ops::op_alignment(self.ctx, op.get_operation())
+            .unwrap_or_else(|| self.natural_alignment(val_ty));
+        writeln!(output, ", align {align}").unwrap();
         Ok(())
     }
 
@@ -484,9 +489,12 @@ impl<'a> ModuleExportState<'a> {
             .get_attr_alloca_element_type(self.ctx)
             .expect("Missing alloca_element_type");
 
+        let elem_llvm_ty = elem_ty.get_type(self.ctx);
         write!(output, "  {res_name} = alloca ").unwrap();
-        self.export_type(elem_ty.get_type(self.ctx), output)?;
-        writeln!(output).unwrap();
+        self.export_type(elem_llvm_ty, output)?;
+        let align = crate::ops::op_alignment(self.ctx, op.get_operation())
+            .unwrap_or_else(|| self.natural_alignment(elem_llvm_ty));
+        writeln!(output, ", align {align}").unwrap();
         Ok(())
     }
 

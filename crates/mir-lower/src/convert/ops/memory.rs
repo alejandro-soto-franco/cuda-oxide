@@ -94,9 +94,21 @@ pub(crate) fn convert_store(
     };
 
     let llvm_store = llvm::StoreOp::new(ctx, val, ptr);
+    copy_alignment(ctx, op, llvm_store.get_operation());
     rewriter.insert_operation(ctx, llvm_store.get_operation());
     rewriter.erase_operation(ctx, op);
     Ok(())
+}
+
+/// Copy the ABI alignment stamped on a MIR memory op onto its lowered LLVM op.
+///
+/// The alignment is stamped by the pre-pass in `lowering.rs` while types are
+/// still MIR; this helper transfers it to the newly created LLVM op so the
+/// exporter can emit `align N`.
+fn copy_alignment(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op: Ptr<Operation>) {
+    if let Some(align) = llvm_export::ops::op_alignment(ctx, mir_op) {
+        llvm_export::ops::set_op_alignment(ctx, llvm_op, align);
+    }
 }
 
 /// Convert `mir.load` to `llvm.load`.
@@ -114,6 +126,7 @@ pub(crate) fn convert_load(
     let llvm_ty = convert_type(ctx, result_ty).map_err(anyhow_to_pliron)?;
 
     let llvm_load = llvm::LoadOp::new(ctx, ptr, llvm_ty);
+    copy_alignment(ctx, op, llvm_load.get_operation());
     rewriter.insert_operation(ctx, llvm_load.get_operation());
     rewriter.replace_operation(ctx, op, llvm_load.get_operation());
 
@@ -157,6 +170,7 @@ pub(crate) fn convert_alloca(
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
     let alloca = llvm::AllocaOp::new(ctx, llvm_pointee, one_val);
+    copy_alignment(ctx, op, alloca.get_operation());
     rewriter.insert_operation(ctx, alloca.get_operation());
     rewriter.replace_operation(ctx, op, alloca.get_operation());
 
@@ -187,10 +201,15 @@ pub(crate) fn convert_ref(
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
     let alloca = llvm::AllocaOp::new(ctx, operand_ty, one_val);
+    // Propagate alignment stamped by the pre-pass (covers repr(align(N))
+    // structs). Without this, the synthesised alloca would be under-aligned
+    // relative to any loads/stores that claim the struct's true alignment.
+    copy_alignment(ctx, op, alloca.get_operation());
     rewriter.insert_operation(ctx, alloca.get_operation());
     let alloca_ptr = alloca.get_operation().deref(ctx).get_result(0);
 
     let store = llvm::StoreOp::new(ctx, operand, alloca_ptr);
+    copy_alignment(ctx, op, store.get_operation());
     rewriter.insert_operation(ctx, store.get_operation());
 
     rewriter.replace_operation_with_values(ctx, op, vec![alloca_ptr]);

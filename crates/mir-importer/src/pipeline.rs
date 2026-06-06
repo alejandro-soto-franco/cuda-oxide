@@ -780,6 +780,82 @@ fn select_target(features: DetectedFeatures) -> &'static str {
     }
 }
 
+/// Runs LLVM's middle-end (`opt -O2`) on the emitted IR before `llc`.
+///
+/// This is what consumes the per-op ABI alignment we emit: the
+/// LoadStoreVectorizer fuses aligned aggregate/element accesses, SROA
+/// scalarizes stack aggregates, and InferAddressSpaces promotes generic
+/// pointers to `.global` (LDG/STG). Gated on alignment — fusion only fires
+/// when loads/stores carry matching `align N` hints.
+///
+/// Set `CUDA_OXIDE_NO_OPT=1` to skip and feed the unoptimised IR straight to
+/// `llc`. Returns the optimised `.ll` path, or `None` if opt is disabled or
+/// unavailable (caller falls back to the original `ll_path`).
+fn optimize_ll(ll_path: &Path, verbose: bool) -> Option<std::path::PathBuf> {
+    if std::env::var("CUDA_OXIDE_NO_OPT").is_ok() {
+        return None;
+    }
+
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(p) = std::env::var("CUDA_OXIDE_OPT") {
+        candidates.push(p);
+    }
+    if let Some(p) = std::process::Command::new("rustc")
+        .args(["--print", "sysroot", "--print", "host-tuple"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .split('\n')
+                .zip([["lib", "rustlib"], ["bin", "opt"]])
+                .flat_map(|(a, b)| [a].into_iter().chain(b))
+                .collect::<std::path::PathBuf>()
+                .to_str()
+                .map(str::to_string)
+        })
+    {
+        candidates.push(p);
+    }
+    for name in ["opt-22", "opt-21", "opt"] {
+        candidates.push(name.to_string());
+    }
+
+    let opt_ll = ll_path.with_extension("opt.ll");
+    for opt_cmd in candidates {
+        match std::process::Command::new(&opt_cmd)
+            .arg("-O2")
+            .arg(ll_path)
+            .arg("-S")
+            .arg("-o")
+            .arg(&opt_ll)
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                if verbose {
+                    eprintln!("opt -O2 via {opt_cmd}: {}", opt_ll.display());
+                }
+                return Some(opt_ll);
+            }
+            Ok(o) => {
+                if verbose {
+                    eprintln!(
+                        "opt ({opt_cmd}) failed: {}",
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    );
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                if verbose {
+                    eprintln!("opt ({opt_cmd}): {e}");
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Generates PTX from LLVM IR using `llc`.
 ///
 /// LLVM 21+ is the minimum supported version:
@@ -827,6 +903,12 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
 
     let verbose = std::env::var("CUDA_OXIDE_VERBOSE").is_ok();
 
+    // Run the middle-end (opt -O2) before llc. Feature detection above
+    // intentionally reads the original (pre-opt) IR so the target is
+    // determined by what the source actually needs, not what opt elides.
+    let optimized = optimize_ll(ll_path, verbose);
+    let llc_input: &Path = optimized.as_deref().unwrap_or(ll_path);
+
     // Check for user-specified llc path override
     if let Ok(llc_path) = std::env::var("CUDA_OXIDE_LLC") {
         if verbose {
@@ -835,7 +917,7 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
         let result = std::process::Command::new(&llc_path)
             .arg("-march=nvptx64")
             .arg(format!("-mcpu={}", target))
-            .arg(ll_path)
+            .arg(llc_input)
             .arg("-o")
             .arg(ptx_path)
             .output();
@@ -899,7 +981,7 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
         let result = std::process::Command::new(llc_cmd)
             .arg("-march=nvptx64")
             .arg(format!("-mcpu={}", llc_target))
-            .arg(ll_path)
+            .arg(llc_input)
             .arg("-o")
             .arg(ptx_path)
             .output();

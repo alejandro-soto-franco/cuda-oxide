@@ -60,20 +60,46 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
-    /// Compute natural alignment (in bytes) for a type.
-    /// Used for atomic load/store which require explicit alignment in LLVM IR.
+    /// Compute conservative ABI alignment (bytes) for a type.
+    ///
+    /// Used as the fallback when no explicit alignment is stamped on a
+    /// load/store/alloca op. Required for atomic loads/stores (LLVM IR
+    /// mandates explicit alignment) and for vectorization hints.
     pub(super) fn natural_alignment(&self, ty: Ptr<TypeObj>) -> u32 {
         let ty_ref = ty.deref(self.ctx);
         if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
-            let width = int_ty.width();
-            // Alignment = ceil(width / 8), minimum 1
-            std::cmp::max(1, width / 8)
-        } else if ty_ref.is::<pliron::builtin::types::FP32Type>() {
+            // ceil(width / 8), minimum 1.
+            std::cmp::max(1, int_ty.width() / 8)
+        } else if ty_ref.is::<FP32Type>() {
             4
-        } else if ty_ref.is::<pliron::builtin::types::FP64Type>() {
+        } else if ty_ref.is::<FP64Type>() {
             8
+        } else if ty_ref.is::<HalfType>() {
+            2
+        } else if ty_ref.is::<PointerType>() {
+            8
+        } else if let Some(array_ty) = ty_ref.downcast_ref::<crate::types::ArrayType>() {
+            // ABI alignment of `[N x T]` matches elem alignment.
+            self.natural_alignment(array_ty.elem_type())
+        } else if let Some(vec_ty) = ty_ref.downcast_ref::<crate::types::VectorType>() {
+            // ABI alignment of an LLVM vector: power-of-2-rounded total width.
+            let elem = self.natural_alignment(vec_ty.elem_type());
+            let total = elem.saturating_mul(vec_ty.num_elements());
+            let mut a = 1u32;
+            while a.saturating_mul(2) <= total && a < 128 {
+                a *= 2;
+            }
+            a
+        } else if let Some(struct_ty) = ty_ref.downcast_ref::<StructType>() {
+            // Max field alignment (1 if empty). May under-state a repr(align)
+            // raise; the true alignment is carried on the op, not the type.
+            struct_ty
+                .fields()
+                .map(|f| self.natural_alignment(f))
+                .max()
+                .unwrap_or(1)
         } else {
-            // Default: 8 bytes (conservative for pointers, etc.)
+            // Conservative fallback for pointers and unknown types.
             8
         }
     }
