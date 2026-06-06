@@ -602,12 +602,22 @@ impl<'a> ModuleExportState<'a> {
         let ordering = fmt_ordering(op.get_attr_llvm_ld_ordering(self.ctx));
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
 
-        write!(output, "  {res_name} = load atomic ").unwrap();
-        self.export_type(ty, output)?;
-        write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
+        let res_name = res_name.clone();
         let align = self.natural_alignment(ty);
-        writeln!(output, "{syncscope} {ordering}, align {align}").unwrap();
+        if self.typed_pointers {
+            let cast = self.emit_ptr_cast_to(ptr, ty, addrspace, value_names, output)?;
+            write!(output, "  {res_name} = load atomic ").unwrap();
+            self.export_type(ty, output)?;
+            write!(output, ", ").unwrap();
+            self.write_typed_ptr(ty, addrspace, output)?;
+            writeln!(output, " {cast}{syncscope} {ordering}, align {align}").unwrap();
+        } else {
+            write!(output, "  {res_name} = load atomic ").unwrap();
+            self.export_type(ty, output)?;
+            write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
+            self.export_value(ptr, value_names, output)?;
+            writeln!(output, "{syncscope} {ordering}, align {align}").unwrap();
+        }
         Ok(())
     }
 
@@ -624,14 +634,26 @@ impl<'a> ModuleExportState<'a> {
         let ordering = fmt_ordering(op.get_attr_llvm_st_ordering(self.ctx));
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
 
-        write!(output, "  store atomic ").unwrap();
-        self.export_type(val.get_type(self.ctx), output)?;
-        write!(output, " ").unwrap();
-        self.export_value(val, value_names, output)?;
-        write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
-        let align = self.natural_alignment(val.get_type(self.ctx));
-        writeln!(output, "{syncscope} {ordering}, align {align}").unwrap();
+        let val_ty = val.get_type(self.ctx);
+        let align = self.natural_alignment(val_ty);
+        if self.typed_pointers {
+            let cast = self.emit_ptr_cast_to(ptr, val_ty, addrspace, value_names, output)?;
+            write!(output, "  store atomic ").unwrap();
+            self.export_type(val_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_value(val, value_names, output)?;
+            write!(output, ", ").unwrap();
+            self.write_typed_ptr(val_ty, addrspace, output)?;
+            writeln!(output, " {cast}{syncscope} {ordering}, align {align}").unwrap();
+        } else {
+            write!(output, "  store atomic ").unwrap();
+            self.export_type(val_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_value(val, value_names, output)?;
+            write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
+            self.export_value(ptr, value_names, output)?;
+            writeln!(output, "{syncscope} {ordering}, align {align}").unwrap();
+        }
         Ok(())
     }
 
@@ -651,14 +673,27 @@ impl<'a> ModuleExportState<'a> {
         let ordering = fmt_ordering(op.get_attr_llvm_rmw_ordering(self.ctx));
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
 
-        write!(output, "  {res_name} = atomicrmw {rmw_kind} ").unwrap();
-        write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
-        write!(output, ", ").unwrap();
-        self.export_type(val.get_type(self.ctx), output)?;
-        write!(output, " ").unwrap();
-        self.export_value(val, value_names, output)?;
-        writeln!(output, "{syncscope} {ordering}").unwrap();
+        let res_name = res_name.clone();
+        let val_ty = val.get_type(self.ctx);
+        if self.typed_pointers {
+            let cast = self.emit_ptr_cast_to(ptr, val_ty, addrspace, value_names, output)?;
+            write!(output, "  {res_name} = atomicrmw {rmw_kind} ").unwrap();
+            self.write_typed_ptr(val_ty, addrspace, output)?;
+            write!(output, " {cast}, ").unwrap();
+            self.export_type(val_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_value(val, value_names, output)?;
+            writeln!(output, "{syncscope} {ordering}").unwrap();
+        } else {
+            write!(output, "  {res_name} = atomicrmw {rmw_kind} ").unwrap();
+            write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
+            self.export_value(ptr, value_names, output)?;
+            write!(output, ", ").unwrap();
+            self.export_type(val_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_value(val, value_names, output)?;
+            writeln!(output, "{syncscope} {ordering}").unwrap();
+        }
         Ok(())
     }
 
@@ -683,18 +718,34 @@ impl<'a> ModuleExportState<'a> {
         // pliron-llvm's cmpxchg result is the full `{ T, i1 }` struct; a
         // separate `extractvalue` op (emitted on its own) pulls out the loaded
         // value, so here we emit only the cmpxchg into the struct-typed result.
-        write!(output, "  {res_name} = cmpxchg ").unwrap();
-        write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
-        write!(output, ", ").unwrap();
-        self.export_type(val_ty, output)?;
-        write!(output, " ").unwrap();
-        self.export_value(cmp, value_names, output)?;
-        write!(output, ", ").unwrap();
-        self.export_type(val_ty, output)?;
-        write!(output, " ").unwrap();
-        self.export_value(new_val, value_names, output)?;
-        writeln!(output, "{syncscope} {success_ord} {failure_ord}").unwrap();
+        let res_name = res_name.clone();
+        if self.typed_pointers {
+            let cast = self.emit_ptr_cast_to(ptr, val_ty, addrspace, value_names, output)?;
+            write!(output, "  {res_name} = cmpxchg ").unwrap();
+            self.write_typed_ptr(val_ty, addrspace, output)?;
+            write!(output, " {cast}, ").unwrap();
+            self.export_type(val_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_value(cmp, value_names, output)?;
+            write!(output, ", ").unwrap();
+            self.export_type(val_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_value(new_val, value_names, output)?;
+            writeln!(output, "{syncscope} {success_ord} {failure_ord}").unwrap();
+        } else {
+            write!(output, "  {res_name} = cmpxchg ").unwrap();
+            write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
+            self.export_value(ptr, value_names, output)?;
+            write!(output, ", ").unwrap();
+            self.export_type(val_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_value(cmp, value_names, output)?;
+            write!(output, ", ").unwrap();
+            self.export_type(val_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_value(new_val, value_names, output)?;
+            writeln!(output, "{syncscope} {success_ord} {failure_ord}").unwrap();
+        }
         Ok(())
     }
 
