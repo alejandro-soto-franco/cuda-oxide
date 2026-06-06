@@ -24,7 +24,15 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "i{}", int_ty.width()).unwrap();
         } else if let Some(ptr_ty) = ty_ref.downcast_ref::<PointerType>() {
             let addrspace = ptr_ty.address_space();
-            if addrspace != 0 {
+            if self.typed_pointers {
+                // Uniform byte pointer; the precise pointee is materialized only
+                // transiently at the memory op that needs it (see typed_ptr.rs).
+                if addrspace != 0 {
+                    write!(output, "i8 addrspace({addrspace})*").unwrap();
+                } else {
+                    write!(output, "i8*").unwrap();
+                }
+            } else if addrspace != 0 {
                 write!(output, "ptr addrspace({addrspace})").unwrap();
             } else {
                 write!(output, "ptr").unwrap();
@@ -56,6 +64,23 @@ impl<'a> ModuleExportState<'a> {
             write!(output, ">").unwrap();
         } else {
             write!(output, "void /* unknown: {} */", ty_ref.disp(self.ctx)).unwrap();
+        }
+        Ok(())
+    }
+
+    /// Write `<pointee> addrspace(N)*` (or `<pointee>*` for address space 0).
+    /// Used by typed-mode memory-op lowering to name a precise pointer operand.
+    pub(super) fn write_typed_ptr(
+        &self,
+        pointee: Ptr<TypeObj>,
+        addrspace: u32,
+        output: &mut String,
+    ) -> Result<(), String> {
+        self.export_type(pointee, output)?;
+        if addrspace != 0 {
+            write!(output, " addrspace({addrspace})*").unwrap();
+        } else {
+            write!(output, "*").unwrap();
         }
         Ok(())
     }
