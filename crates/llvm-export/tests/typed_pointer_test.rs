@@ -6,7 +6,7 @@
 //! Tests for typed-pointer NVVM export (pre-Blackwell, issue #98).
 
 use llvm_export::export::{
-    export_module_to_string_with_config, ExportBackendConfig, NvvmExportConfig, PtxExportConfig,
+    ExportBackendConfig, NvvmExportConfig, PtxExportConfig, export_module_to_string_with_config,
 };
 use llvm_export::ops::{
     AllocaOp, ConstantOp, FuncOp, GepIndex, GetElementPtrOp, LoadOp, ReturnOp, StoreOp,
@@ -247,7 +247,12 @@ fn typed_mode_gep_casts_base_and_result() {
     let mut ctx = Context::new();
     let (module, mblock, func, entry, ptr_val) = ptr_param_fn(&mut ctx, 0);
     let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let gep = GetElementPtrOp::new(&mut ctx, ptr_val, vec![GepIndex::Constant(0)], i32_ty.to_ptr());
+    let gep = GetElementPtrOp::new(
+        &mut ctx,
+        ptr_val,
+        vec![GepIndex::Constant(0)],
+        i32_ty.to_ptr(),
+    );
     gep.get_operation().insert_at_back(entry, &ctx);
     ReturnOp::new(&mut ctx, None)
         .get_operation()

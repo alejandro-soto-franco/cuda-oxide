@@ -1109,8 +1109,9 @@ impl<'a> ModuleExportState<'a> {
         // honest if the pre-pass is ever refactored.
         let res = op.get_operation().deref(self.ctx).get_result(0);
         debug_assert!(
-            value_names.get(&res).is_some_and(|name| name.starts_with('@')
-                || name.starts_with("bitcast (")),
+            value_names
+                .get(&res)
+                .is_some_and(|name| name.starts_with('@') || name.starts_with("bitcast (")),
             "AddressOfOp result must be pre-registered as a global symbol (opaque) \
              or a constant bitcast to i8* (typed) by the naming pre-pass; got {:?}",
             value_names.get(&res),

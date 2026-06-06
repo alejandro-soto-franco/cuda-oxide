@@ -47,6 +47,12 @@ cargo oxide setup                   # explicitly build the codegen backend
 | `--tui`           | debug                | Use GDB's TUI interface                  |
 | `--check`         | fmt                  | Check formatting only                    |
 
+NVVM IR output (`--emit-nvvm-ir` and the libdevice path) targets the right
+pointer dialect automatically: opaque pointers on compute_100+ (Blackwell+) and
+typed pointers on older targets, whose libNVVM rejects opaque pointers (see
+[#98](https://github.com/NVlabs/cuda-oxide/issues/98)). Set
+`CUDA_OXIDE_PTR_MODE=typed|opaque` to override the automatic choice.
+
 ## Commands
 
 ### `cargo oxide run <example>`

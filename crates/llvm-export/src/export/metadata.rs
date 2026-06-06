@@ -79,14 +79,19 @@ pub(super) fn emit_nvvm_annotations(
             writeln!(
                 output,
                 "!{} = !{{{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}, !\"minctasm\", i32 {}}}",
-                md_id, fn_ref(&bounds.name), bounds.max_threads, min_blocks
+                md_id,
+                fn_ref(&bounds.name),
+                bounds.max_threads,
+                min_blocks
             )
             .unwrap();
         } else {
             writeln!(
                 output,
                 "!{} = !{{{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}}}",
-                md_id, fn_ref(&bounds.name), bounds.max_threads
+                md_id,
+                fn_ref(&bounds.name),
+                bounds.max_threads
             )
             .unwrap();
         }

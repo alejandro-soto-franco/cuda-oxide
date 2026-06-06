@@ -86,9 +86,7 @@ impl<'a> ModuleExportState<'a> {
                 let field = match idx {
                     GepIndexAttr::Constant(c) => *c as usize,
                     GepIndexAttr::OperandIdx(_) => {
-                        return Err(
-                            "typed-pointer GEP into a struct needs a constant index".into(),
-                        );
+                        return Err("typed-pointer GEP into a struct needs a constant index".into());
                     }
                 };
                 cur = st

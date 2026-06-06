@@ -92,8 +92,10 @@ impl ExportBackendConfig for PtxExportConfig {
 /// This produces IR suitable for consumption by libNVVM (e.g., `nvvmCompileProgram -gen-lto`)
 /// or other NVVM-compatible tools.
 ///
-/// Currently supports NVVM 20 dialect (Blackwell+, opaque pointers).
-/// NVVM 7 dialect (pre-Blackwell, typed pointers) is not yet supported.
+/// Emits the NVVM IR 2.0 dialect (version `{2, 0}`). Pointers render as opaque
+/// (`ptr`) by default, which libNVVM accepts on compute_100+ (Blackwell+). Set
+/// `typed_pointers` for pre-Blackwell targets, whose libNVVM accepts the same
+/// dialect with typed pointers (`i8*`); see issue #98.
 #[derive(Clone, Debug, Default)]
 pub struct NvvmExportConfig {
     /// Render typed pointers for pre-Blackwell libNVVM. Default false (opaque).

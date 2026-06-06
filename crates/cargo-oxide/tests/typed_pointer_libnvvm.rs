@@ -49,7 +49,10 @@ fn emit_nvvm_ir(example: &str, arch: &str, ptr_mode: &str) -> PathBuf {
         .current_dir(repo_root())
         .status()
         .expect("run cargo-oxide build");
-    assert!(status.success(), "emit NVVM IR failed for {example} {arch} {ptr_mode}");
+    assert!(
+        status.success(),
+        "emit NVVM IR failed for {example} {arch} {ptr_mode}"
+    );
     example_ll(example)
 }
 
