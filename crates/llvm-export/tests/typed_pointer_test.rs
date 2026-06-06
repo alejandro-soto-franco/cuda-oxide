@@ -8,7 +8,7 @@
 use llvm_export::export::{
     export_module_to_string_with_config, ExportBackendConfig, NvvmExportConfig, PtxExportConfig,
 };
-use llvm_export::ops::{FuncOp, LoadOp, ReturnOp, StoreOp};
+use llvm_export::ops::{AllocaOp, ConstantOp, FuncOp, LoadOp, ReturnOp, StoreOp};
 use llvm_export::types::{FuncType, PointerType, VoidType};
 use pliron::{
     basic_block::BasicBlock,
@@ -187,5 +187,55 @@ fn typed_mode_store_bitcasts_pointer_operand() {
     assert!(
         store_line_o.contains(", ptr"),
         "opaque store should use ptr, got store line:\n{store_line_o}"
+    );
+}
+
+#[test]
+fn typed_mode_alloca_yields_i8_pointer() {
+    let mut ctx = Context::new();
+    let (module, mblock, func, entry, _ptr_val) = ptr_param_fn(&mut ctx, 0);
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let one = {
+        let apint =
+            pliron::utils::apint::APInt::from_i64(1, std::num::NonZeroUsize::new(64).unwrap());
+        let attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, apint);
+        let c = ConstantOp::new(&mut ctx, attr.into());
+        c.get_operation().insert_at_back(entry, &ctx);
+        c.get_operation().deref(&ctx).get_result(0)
+    };
+    let alloca = AllocaOp::new(&mut ctx, i32_ty.to_ptr(), one);
+    alloca.get_operation().insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(mblock, &ctx);
+
+    let typed = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig {
+            typed_pointers: true,
+        },
+    )
+    .unwrap();
+    assert!(
+        typed.contains("%__ptrcast.") && typed.contains("alloca i32"),
+        "typed alloca should allocate into a raw temp, got:\n{typed}"
+    );
+    assert!(
+        typed.contains("bitcast i32* %__ptrcast.") && typed.contains(" to i8*"),
+        "typed alloca should bitcast its result to i8*, got:\n{typed}"
+    );
+
+    let opaque =
+        export_module_to_string_with_config(&ctx, &module, &NvvmExportConfig::default()).unwrap();
+    let alloca_line = opaque
+        .lines()
+        .find(|l| l.contains("alloca i32"))
+        .expect("an alloca line");
+    assert!(
+        !alloca_line.contains("bitcast"),
+        "opaque alloca should not bitcast, got:\n{alloca_line}"
     );
 }

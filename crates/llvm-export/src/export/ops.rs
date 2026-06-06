@@ -511,11 +511,22 @@ impl<'a> ModuleExportState<'a> {
             .expect("Missing alloca_element_type");
 
         let elem_llvm_ty = elem_ty.get_type(self.ctx);
-        write!(output, "  {res_name} = alloca ").unwrap();
-        self.export_type(elem_llvm_ty, output)?;
+        let res_name = res_name.clone();
         let align = crate::ops::op_alignment(self.ctx, op.get_operation())
             .unwrap_or_else(|| self.natural_alignment(elem_llvm_ty));
-        writeln!(output, ", align {align}").unwrap();
+        if self.typed_pointers {
+            // alloca yields a native `<elem>*`; bitcast it to the uniform i8*.
+            let addrspace = addrspace_of(res.get_type(self.ctx), self.ctx);
+            let raw = self.fresh_ptr_cast_name();
+            write!(output, "  {raw} = alloca ").unwrap();
+            self.export_type(elem_llvm_ty, output)?;
+            writeln!(output, ", align {align}").unwrap();
+            self.emit_ptr_cast_to_i8(&raw, elem_llvm_ty, addrspace, &res_name, output)?;
+        } else {
+            write!(output, "  {res_name} = alloca ").unwrap();
+            self.export_type(elem_llvm_ty, output)?;
+            writeln!(output, ", align {align}").unwrap();
+        }
         Ok(())
     }
 
