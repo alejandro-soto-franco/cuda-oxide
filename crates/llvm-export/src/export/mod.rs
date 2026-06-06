@@ -45,6 +45,7 @@ mod module;
 mod names;
 mod ops;
 mod state;
+mod typed_ptr;
 mod types;
 
 pub use config::{ExportBackendConfig, NvvmExportConfig, PtxExportConfig};
