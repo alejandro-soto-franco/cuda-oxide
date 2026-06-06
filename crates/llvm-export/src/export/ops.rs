@@ -474,15 +474,26 @@ impl<'a> ModuleExportState<'a> {
         let val_ty = val.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
 
-        write!(output, "  store ").unwrap();
-        self.export_type(val_ty, output)?;
-        write!(output, " ").unwrap();
-        self.export_value(val, value_names, output)?;
-        write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
         let align = crate::ops::op_alignment(self.ctx, op.get_operation())
             .unwrap_or_else(|| self.natural_alignment(val_ty));
-        writeln!(output, ", align {align}").unwrap();
+        if self.typed_pointers {
+            let cast = self.emit_ptr_cast_to(ptr, val_ty, addrspace, value_names, output)?;
+            write!(output, "  store ").unwrap();
+            self.export_type(val_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_value(val, value_names, output)?;
+            write!(output, ", ").unwrap();
+            self.write_typed_ptr(val_ty, addrspace, output)?;
+            writeln!(output, " {cast}, align {align}").unwrap();
+        } else {
+            write!(output, "  store ").unwrap();
+            self.export_type(val_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_value(val, value_names, output)?;
+            write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
+            self.export_value(ptr, value_names, output)?;
+            writeln!(output, ", align {align}").unwrap();
+        }
         Ok(())
     }
 

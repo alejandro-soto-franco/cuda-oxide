@@ -8,7 +8,7 @@
 use llvm_export::export::{
     export_module_to_string_with_config, ExportBackendConfig, NvvmExportConfig, PtxExportConfig,
 };
-use llvm_export::ops::{FuncOp, LoadOp, ReturnOp};
+use llvm_export::ops::{FuncOp, LoadOp, ReturnOp, StoreOp};
 use llvm_export::types::{FuncType, PointerType, VoidType};
 use pliron::{
     basic_block::BasicBlock,
@@ -142,5 +142,50 @@ fn typed_mode_load_bitcasts_pointer_operand() {
     assert!(
         opaque.contains("load i32, ptr"),
         "opaque load should use ptr, got:\n{opaque}"
+    );
+}
+
+#[test]
+fn typed_mode_store_bitcasts_pointer_operand() {
+    let mut ctx = Context::new();
+    let (module, mblock, func, entry, ptr_val) = ptr_param_fn(&mut ctx, 0);
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let load = LoadOp::new(&mut ctx, ptr_val, i32_ty.to_ptr());
+    let loaded = load.get_operation().deref(&ctx).get_result(0);
+    load.get_operation().insert_at_back(entry, &ctx);
+    StoreOp::new(&mut ctx, loaded, ptr_val)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(mblock, &ctx);
+
+    let typed = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig {
+            typed_pointers: true,
+        },
+    )
+    .unwrap();
+    let store_line = typed
+        .lines()
+        .find(|l| l.trim_start().starts_with("store "))
+        .expect("a store line");
+    assert!(
+        store_line.contains("i32* %__ptrcast."),
+        "typed store should store through a typed pointer, got store line:\n{store_line}\nfull:\n{typed}"
+    );
+
+    let opaque =
+        export_module_to_string_with_config(&ctx, &module, &NvvmExportConfig::default()).unwrap();
+    let store_line_o = opaque
+        .lines()
+        .find(|l| l.trim_start().starts_with("store "))
+        .expect("a store line");
+    assert!(
+        store_line_o.contains(", ptr"),
+        "opaque store should use ptr, got store line:\n{store_line_o}"
     );
 }
